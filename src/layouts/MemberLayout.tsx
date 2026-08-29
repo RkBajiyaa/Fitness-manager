@@ -13,19 +13,18 @@ const TABS: Array<{ to: string; label: string; icon: IconName; end?: boolean }> 
 ];
 
 /**
- * The member shell is an app, not a page: compact header, bottom tabs,
- * and a content column capped at 560px even on a 4K monitor — a training
- * log does not get better by being 1600px wide.
+ * The member shell is an app, not a page: compact header, bottom tabs, and a
+ * content column capped at 560px even on a 4K monitor — a training log does not
+ * get better by being 1600px wide.
  */
 export function MemberLayout() {
-  const { session, theme, toggleTheme } = useApp();
+  const { session, storageDegraded } = useApp();
   const nav = useNavigate();
+  const memberId = session?.memberId ?? '';
 
-  const me = useData(
-    () => (session?.memberId ? api.members.get(session, session.memberId) : null),
-    [session?.memberId],
-  );
+  const me = useData(() => (session && memberId ? api.members.get(session, memberId) : null), [memberId]);
   const gym = useData(() => (session ? api.gyms.current(session) : null), [session?.gymId]);
+  const active = useData(() => (session && memberId ? api.sessions.active(session, memberId) : null), [memberId]);
 
   return (
     <div className="mshell">
@@ -36,11 +35,37 @@ export function MemberLayout() {
             <div className="t-sm u-truncate" style={{ fontWeight: 620 }}>{me?.member.name}</div>
             <div className="t-xs t-faint u-truncate">{gym?.name}</div>
           </div>
-          <Button size="sm" variant="ghost" icon={theme === 'dark' ? 'sun' : 'moon'}
-            onClick={toggleTheme} aria-label="Toggle colour theme" />
-          <Button size="sm" variant="ghost" icon="logout" onClick={() => nav('/')} aria-label="Switch role" />
+          <Button size="sm" variant="ghost" icon="trophy"
+            onClick={() => nav('/member/records')} aria-label="Personal records" />
         </div>
       </header>
+
+      {storageDegraded && (
+        <div style={{ background: 'var(--warning-soft)', padding: 'var(--s-2) var(--s-4)' }}>
+          <div className="mcontent__inner t-xs" style={{ color: 'var(--warning)' }}>
+            Local storage is full — changes made now will not survive a refresh.
+          </div>
+        </div>
+      )}
+
+      {active && (
+        <button
+          onClick={() => nav('/member/session')}
+          style={{
+            display: 'block', width: '100%', border: 0, cursor: 'pointer',
+            background: 'var(--brand)', color: 'var(--brand-ink)',
+            padding: 'var(--s-3) var(--s-4)',
+          }}
+        >
+          <span className="mcontent__inner u-row u-gap-3" style={{ display: 'flex' }}>
+            <Icon name="play" size={15} />
+            <span className="t-sm u-grow" style={{ fontWeight: 560, textAlign: 'left' }}>
+              Workout in progress — {active.title}
+            </span>
+            <Icon name="chevronRight" size={15} />
+          </span>
+        </button>
+      )}
 
       <main className="mcontent">
         <div className="mcontent__inner"><Outlet /></div>

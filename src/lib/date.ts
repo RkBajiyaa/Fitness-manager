@@ -58,8 +58,17 @@ export function monthKey(s: ISODate | ISODateTime): string {
   return s.slice(0, 7);
 }
 
+/**
+ * The LOCAL calendar day an instant falls on.
+ *
+ * Slicing the first ten characters off an ISO string returns the UTC day, which
+ * is not the day the gym had. In IST (UTC+5:30) a payment taken at 00:30 local
+ * carries a UTC date of the previous day, so it silently dropped out of "today's
+ * revenue", today's attendance and the new-registration count. The gym's day is
+ * a local day, so convert rather than slice.
+ */
 export function dayOf(s: ISODateTime): ISODate {
-  return s.slice(0, 10);
+  return toISO(new Date(s));
 }
 
 export function isBetween(s: ISODate, from: ISODate, to: ISODate): boolean {

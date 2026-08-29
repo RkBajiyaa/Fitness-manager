@@ -7,39 +7,55 @@ import { Icon } from '../../components/ui/Icon';
 import {
   BarChart, ChartFrame, DivergingBarChart, Legend, LineChart, SERIES,
 } from '../../components/charts';
-import { AddExpenseDialog, MarkAttendanceDialog, RecordPaymentDialog, RenewMembershipDialog } from '../../components/dialogs';
+import { AttentionQueue } from '../../components/owner/AttentionQueue';
+import {
+  AddExpenseDialog, MarkAttendanceDialog, RecordPaymentDialog, RenewMembershipDialog,
+} from '../../components/dialogs';
+import { MessageDialog } from '../../components/dialogs/communication';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
-import { count, dateLong, dayLabel, money, moneyCompact, monthLabel } from '../../lib/format';
-import { addDays, addMonths, monthKey, startOfMonth, todayISO } from '../../lib/date';
+import type { MemberRow } from '../../lib/api';
+import { count, dateLong, dayLabel, money, moneyCompact, monthLabel, pct } from '../../lib/format';
+import { addDays, addMonths, monthKey, todayISO } from '../../lib/date';
 
 export default function Dashboard() {
   const { session } = useApp();
   const nav = useNavigate();
   const [dialog, setDialog] = useState<'payment' | 'expense' | 'attendance' | null>(null);
-  const [renewId, setRenewId] = useState<string | null>(null);
+  const [renew, setRenew] = useState<string | null>(null);
+  const [pay, setPay] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   const today = todayISO();
 
   const k = useData(() => (session ? api.dashboard.get(session) : null), [session?.gymId]);
+  const queue = useData(() => (session ? api.engagement.queue(session) : []), [session?.gymId]);
+  const highlights = useData(() => (session ? api.engagement.highlights(session, 4) : []), [session?.gymId]);
+  const counts = useData(() => (session ? api.members.counts(session) : null), [session?.gymId]);
   const revenue = useData(() => (session ? api.dashboard.revenueTrend(session, 6) : []), [session?.gymId]);
   const spend = useData(() => (session ? api.dashboard.expenseTrend(session, 6) : []), [session?.gymId]);
-  const growth = useData(() => (session ? api.dashboard.memberGrowth(session, 6) : []), [session?.gymId]);
-  const regs = useData(() => (session ? api.dashboard.registrationTrend(session, 6) : { fresh: [], renewals: [] }), [session?.gymId]);
-  const attendance = useData(
-    () => (session ? api.attendance.trend(session, addDays(today, -29), today) : []),
+  const sessionTrend = useData(
+    () => (session ? api.dashboard.sessionTrend(session, addDays(today, -29), today) : []),
     [session?.gymId],
   );
-  const expiring = useData(() => (session ? api.dashboard.expiring(session, 7) : []), [session?.gymId]);
+  const growth = useData(() => (session ? api.dashboard.memberGrowth(session, 6) : []), [session?.gymId]);
+  const expiring = useData(() => (session ? api.dashboard.expiring(session, 14) : []), [session?.gymId]);
   const dues = useData(() => (session ? api.payments.outstanding(session) : []), [session?.gymId]);
 
-  if (!session || !k) return null;
+  if (!session || !k || !counts) return null;
 
   const profitSeries = revenue.map((p, i) => ({ ...p, y: p.y - (spend[i]?.y ?? 0) }));
-  const monthLabelNow = monthLabel(monthKey(today));
   const prevMonth = monthKey(addMonths(today, -1));
   const prevRevenue = revenue.find((p) => p.x === prevMonth)?.y ?? 0;
   const revenueDelta = prevRevenue > 0 ? ((k.revenueMonth - prevRevenue) / prevRevenue) * 100 : 0;
+  const activeBase = Math.max(1, k.activeMembers);
+  const sessionsPerMember = k.sessionsWeek / activeBase;
+
+  const act = (row: MemberRow, action: 'renew' | 'payment' | 'message') => {
+    if (action === 'renew') setRenew(row.member.id);
+    if (action === 'payment') setPay(row.member.id);
+    if (action === 'message') setMessage(row.member.id);
+  };
 
   return (
     <div className="anim-page">
@@ -64,12 +80,94 @@ export default function Dashboard() {
         }
       />
 
-      {/* ---- The month, as one number ---- */}
+      {/* ================= THE QUEUE THAT MATTERS AT 50 MEMBERS ================= */}
+      <Card className="u-mb-5">
+        <CardHead
+          title="Needs attention"
+          subtitle={queue.length
+            ? `${counts.attention} to act on, ${counts.watch} to watch`
+            : 'Nothing needs chasing today'}
+          action={queue.length > 0
+            ? <Button size="sm" variant="ghost" iconRight="arrowRight" onClick={() => nav('/owner/attention')}>
+                See all
+              </Button>
+            : undefined}
+        />
+        <CardBody flush>
+          <AttentionQueue rows={queue} limit={4} onAct={act} />
+        </CardBody>
+      </Card>
+
+      {/* ================= TODAY ================= */}
+      <h2 className="t-label u-mb-3">Today</h2>
+      <div className="grid-stats grid-stats--6 u-mb-5">
+        <StatTile label="Sessions logged" icon="dumbbell" value={count(k.sessionsToday)}
+          hint="training recorded" onClick={() => nav('/owner/members')} />
+        <StatTile label="Check-ins" icon="calendarCheck" value={count(k.attendanceToday)}
+          hint="members in" onClick={() => nav('/owner/attendance')} />
+        <StatTile label="Inside now" icon="users"
+          value={k.insideNow == null ? '—' : count(k.insideNow)}
+          hint={k.insideNow == null ? 'no check-out data yet' : 'not yet checked out'}
+          onClick={() => nav('/owner/attendance')} />
+        <StatTile label="Revenue" icon="wallet" value={money(k.revenueToday)}
+          hint="received today" onClick={() => nav('/owner/payments')} />
+        <StatTile label="Expenses" icon="receipt" value={money(k.expensesToday)}
+          hint="spent today" onClick={() => nav('/owner/expenses')} />
+        <StatTile label="New / renewals" icon="userPlus" value={`${k.newToday} / ${k.renewalsToday}`}
+          hint="signed today" onClick={() => nav('/owner/memberships')} />
+      </div>
+
+      {/* ================= ENGAGEMENT ================= */}
+      <h2 className="t-label u-mb-3">Engagement</h2>
+      <div className="grid-stats u-mb-5">
+        <StatTile label="Active members" icon="users" value={count(k.activeMembers)}
+          hint={`of ${k.totalMembers} on the roster`} onClick={() => nav('/owner/members')} />
+        <StatTile label="Sessions this week" icon="activity" value={count(k.sessionsWeek)}
+          hint={`${sessionsPerMember.toFixed(1)} per active member`} />
+        <StatTile label="Training rate" icon="target"
+          value={pct((k.sessionsWeek / (activeBase * 3)) * 100)}
+          hint="against a 3-a-week benchmark" />
+        <StatTile label="Expiring in 14 days" icon="clock" value={count(k.expiringSoon)}
+          accent="var(--warning-mark)" hint="renewal conversations"
+          onClick={() => nav('/owner/memberships')} />
+      </div>
+
+      {highlights.length > 0 && (
+        <Card className="u-mb-5">
+          <CardHead title="Worth mentioning" subtitle="Real milestones your members hit this month" />
+          <CardBody flush>
+            <ul className="cardlist">
+              {highlights.map((h, i) => (
+                <li key={`${h.memberId}-${i}`}>
+                  <button className="cardlist__item" onClick={() => nav(`/owner/members/${h.memberId}`)}>
+                    <span style={{
+                      width: 32, height: 32, flex: 'none', display: 'grid', placeItems: 'center',
+                      borderRadius: 'var(--r-md)', background: 'var(--accent-soft)', color: 'var(--accent)',
+                    }}>
+                      <Icon name={h.kind === 'pr' ? 'trophy' : 'flame'} size={16} />
+                    </span>
+                    <span className="u-grow" style={{ minWidth: 0 }}>
+                      <span className="t-sm" style={{ fontWeight: 580 }}>{h.memberName}</span>
+                      <span className="t-xs t-muted" style={{ display: 'block' }}>{h.text}</span>
+                    </span>
+                    <Button size="sm" icon="message"
+                      onClick={(e) => { e.stopPropagation(); setMessage(h.memberId); }}>
+                      Congratulate
+                    </Button>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
+
+      {/* ================= THE MONTH, AS ONE NUMBER ================= */}
       <Card className="u-mb-5">
         <div className="card__body">
           <div className="grid-3" style={{ alignItems: 'center' }}>
             <div>
-              <div className="t-label">Operating profit · {monthLabelNow}</div>
+              <div className="t-label">Operating profit · {monthLabel(monthKey(today))}</div>
               <div
                 className="u-mt-2"
                 style={{
@@ -85,7 +183,9 @@ export default function Dashboard() {
             </div>
             <div className="u-col u-gap-4">
               <MiniLine label="Revenue this month" value={money(k.revenueMonth)}
-                delta={prevRevenue > 0 ? `${revenueDelta >= 0 ? '+' : '−'}${Math.abs(revenueDelta).toFixed(0)}% vs last month` : undefined}
+                delta={prevRevenue > 0
+                  ? `${revenueDelta >= 0 ? '+' : '−'}${Math.abs(revenueDelta).toFixed(0)}% vs last month`
+                  : undefined}
                 tone={revenueDelta >= 0 ? 'good' : 'bad'} color={SERIES.s1} />
               <MiniLine label="Expenses this month" value={money(k.expensesMonth)} color={SERIES.s2} />
             </div>
@@ -118,44 +218,7 @@ export default function Dashboard() {
         </div>
       </Card>
 
-      {/* ---- Today ---- */}
-      <h2 className="t-label u-mb-3">Today</h2>
-      <div className="grid-stats grid-stats--6 u-mb-5">
-        <StatTile label="Attendance" icon="calendarCheck" value={count(k.attendanceToday)}
-          hint="members checked in" onClick={() => nav('/owner/attendance')} />
-        <StatTile
-          label="Inside now" icon="users"
-          value={k.insideNow == null ? '—' : count(k.insideNow)}
-          hint={k.insideNow == null ? 'no check-out data yet' : 'not yet checked out'}
-          onClick={() => nav('/owner/attendance')}
-        />
-        <StatTile label="Revenue" icon="wallet" value={money(k.revenueToday)}
-          hint="received today" onClick={() => nav('/owner/payments')} accent={SERIES.s1} />
-        <StatTile label="Expenses" icon="receipt" value={money(k.expensesToday)}
-          hint="spent today" onClick={() => nav('/owner/expenses')} accent={SERIES.s2} />
-        <StatTile label="New members" icon="userPlus" value={count(k.newToday)}
-          hint="registered today" onClick={() => nav('/owner/members')} />
-        <StatTile label="Renewals" icon="refresh" value={count(k.renewalsToday)}
-          hint="renewed today" onClick={() => nav('/owner/memberships')} />
-      </div>
-
-      {/* ---- Membership health ---- */}
-      <h2 className="t-label u-mb-3">Membership health</h2>
-      <div className="grid-stats u-mb-5">
-        <StatTile label="Total members" icon="users" value={count(k.totalMembers)}
-          hint="on the roster" onClick={() => nav('/owner/members')} />
-        <StatTile label="Active" icon="checkCircle" value={count(k.activeMembers)}
-          hint={`${k.totalMembers ? Math.round((k.activeMembers / k.totalMembers) * 100) : 0}% of the roster`}
-          accent="var(--good)" onClick={() => nav('/owner/members')} />
-        <StatTile label="Expiring in 7 days" icon="clock" value={count(k.expiringSoon)}
-          hint="renewal calls to make" accent="var(--warning-mark)"
-          onClick={() => nav('/owner/memberships')} />
-        <StatTile label="Pending payments" icon="alert" value={money(k.pendingTotal)}
-          hint={`${k.pendingCount} member${k.pendingCount === 1 ? '' : 's'} owe money`}
-          accent="var(--critical)" onClick={() => nav('/owner/payments')} />
-      </div>
-
-      {/* ---- Charts ---- */}
+      {/* ================= CHARTS ================= */}
       <div className="grid-2 u-mb-5">
         <Card>
           <CardBody>
@@ -165,9 +228,7 @@ export default function Dashboard() {
               legend={<Legend series={[{ label: 'Revenue', color: SERIES.s1 }, { label: 'Expenses', color: SERIES.s2 }]} />}
             >
               <BarChart
-                height={250}
-                format={moneyCompact}
-                xLabel={(p) => monthLabel(p.label)}
+                height={250} format={moneyCompact} xLabel={(p) => monthLabel(p.label)}
                 series={[
                   { key: 'rev', label: 'Revenue', color: SERIES.s1, points: revenue },
                   { key: 'exp', label: 'Expenses', color: SERIES.s2, points: spend },
@@ -180,88 +241,59 @@ export default function Dashboard() {
         <Card>
           <CardBody>
             <ChartFrame title="Operating profit" subtitle="Revenue minus expenses, by month">
-              <DivergingBarChart
-                points={profitSeries}
-                height={250}
-                format={moneyCompact}
-                xLabel={(p) => monthLabel(p.label)}
-              />
+              <DivergingBarChart points={profitSeries} height={250}
+                format={moneyCompact} xLabel={(p) => monthLabel(p.label)} />
             </ChartFrame>
           </CardBody>
         </Card>
 
         <Card>
           <CardBody>
-            <ChartFrame title="Attendance" subtitle="Distinct members checking in, last 30 days">
-              <LineChart
-                area
-                height={230}
-                format={(v) => String(Math.round(v))}
+            <ChartFrame title="Training volume" subtitle="Sessions logged across the studio, last 30 days">
+              <LineChart area height={230} format={(v) => String(Math.round(v))}
                 xLabel={(p) => dayLabel(p.label)}
-                series={[{ key: 'att', label: 'Check-ins', color: SERIES.s1, points: attendance }]}
-              />
+                series={[{ key: 's', label: 'Sessions', color: SERIES.s1, points: sessionTrend }]} />
             </ChartFrame>
           </CardBody>
         </Card>
 
         <Card>
           <CardBody>
-            <ChartFrame
-              title="New registrations vs renewals"
-              subtitle="How much of the month's growth is new business"
-              legend={<Legend series={[{ label: 'New', color: SERIES.s1 }, { label: 'Renewals', color: SERIES.s2 }]} />}
-            >
-              <BarChart
-                height={230}
-                format={(v) => String(Math.round(v))}
+            <ChartFrame title="Member growth" subtitle="Roster size at each month end">
+              <LineChart area height={230} format={(v) => String(Math.round(v))}
                 xLabel={(p) => monthLabel(p.label)}
-                series={[
-                  { key: 'new', label: 'New', color: SERIES.s1, points: regs.fresh },
-                  { key: 'ren', label: 'Renewals', color: SERIES.s2, points: regs.renewals },
-                ]}
-              />
+                series={[{ key: 'g', label: 'Members', color: SERIES.s1, points: growth }]} />
             </ChartFrame>
           </CardBody>
         </Card>
       </div>
 
-      <Card className="u-mb-5">
-        <CardBody>
-          <ChartFrame title="Member growth" subtitle="Total members on the roster at each month end">
-            <LineChart
-              area
-              height={200}
-              format={(v) => String(Math.round(v))}
-              xLabel={(p) => monthLabel(p.label)}
-              series={[{ key: 'g', label: 'Members', color: SERIES.s1, points: growth }]}
-            />
-          </ChartFrame>
-        </CardBody>
-      </Card>
-
-      {/* ---- Work queues ---- */}
+      {/* ================= WORK QUEUES ================= */}
       <div className="grid-2">
         <Card>
           <CardHead
-            title="Expiring in the next 7 days"
-            subtitle={expiring.length ? `${expiring.length} membership${expiring.length === 1 ? '' : 's'} to renew` : undefined}
-            action={<Button size="sm" variant="ghost" iconRight="arrowRight" onClick={() => nav('/owner/memberships')}>All</Button>}
+            title="Renewals due"
+            subtitle={expiring.length ? `${expiring.length} within 14 days` : undefined}
+            action={<Button size="sm" variant="ghost" iconRight="arrowRight"
+              onClick={() => nav('/owner/memberships')}>All</Button>}
           />
           <CardBody flush>
             {expiring.length === 0 ? (
-              <EmptyState icon="checkCircle" title="Nothing expiring this week"
-                message="Every active membership has more than a week left." />
+              <EmptyState icon="checkCircle" title="Nothing expiring"
+                message="Every active membership has more than two weeks left." />
             ) : (
               <ul className="cardlist">
                 {expiring.slice(0, 6).map((r) => (
                   <li key={r.member.id} className="cardlist__item" style={{ cursor: 'default' }}>
                     <Avatar name={r.member.name} size="sm" />
                     <span className="u-grow u-truncate">
-                      <span className="t-sm u-truncate" style={{ fontWeight: 560, display: 'block' }}>{r.member.name}</span>
+                      <span className="t-sm u-truncate" style={{ fontWeight: 560, display: 'block' }}>
+                        {r.member.name}
+                      </span>
                       <span className="t-xs t-faint">{r.membership?.planNameSnapshot}</span>
                     </span>
                     <StatusBadge status={r.status} daysLeft={r.daysLeft} />
-                    <Button size="sm" variant="primary" onClick={() => setRenewId(r.member.id)}>Renew</Button>
+                    <Button size="sm" variant="primary" onClick={() => setRenew(r.member.id)}>Renew</Button>
                   </li>
                 ))}
               </ul>
@@ -271,9 +303,10 @@ export default function Dashboard() {
 
         <Card>
           <CardHead
-            title="Who owes money"
-            subtitle={dues.length ? `${money(k.pendingTotal)} outstanding across ${dues.length} members` : undefined}
-            action={<Button size="sm" variant="ghost" iconRight="arrowRight" onClick={() => nav('/owner/payments')}>All</Button>}
+            title="Outstanding payments"
+            subtitle={dues.length ? `${money(k.pendingTotal)} across ${dues.length} members` : undefined}
+            action={<Button size="sm" variant="ghost" iconRight="arrowRight"
+              onClick={() => nav('/owner/payments')}>All</Button>}
           />
           <CardBody flush>
             {dues.length === 0 ? (
@@ -285,7 +318,9 @@ export default function Dashboard() {
                   <li key={r.member.id} className="cardlist__item" style={{ cursor: 'default' }}>
                     <Avatar name={r.member.name} size="sm" />
                     <span className="u-grow u-truncate">
-                      <span className="t-sm u-truncate" style={{ fontWeight: 560, display: 'block' }}>{r.member.name}</span>
+                      <span className="t-sm u-truncate" style={{ fontWeight: 560, display: 'block' }}>
+                        {r.member.name}
+                      </span>
                       <span className="t-xs t-faint">
                         paid {money(r.dues.paid)} of {money(r.dues.billed)}
                       </span>
@@ -293,9 +328,7 @@ export default function Dashboard() {
                     <span className="t-sm u-num u-nowrap" style={{ fontWeight: 620, color: 'var(--critical)' }}>
                       {money(r.dues.due)}
                     </span>
-                    <Button size="sm" onClick={() => nav(`/owner/members/${r.member.id}`)} aria-label={`Open ${r.member.name}`}>
-                      <Icon name="chevronRight" size={15} />
-                    </Button>
+                    <Button size="sm" variant="primary" onClick={() => setPay(r.member.id)}>Collect</Button>
                   </li>
                 ))}
               </ul>
@@ -304,15 +337,12 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <p className="t-xs t-faint u-mt-5 u-center">
-        Every figure above is derived from stored events at read time — nothing here is a cached total.
-        Period shown: {monthLabel(monthKey(startOfMonth(today)))} to date.
-      </p>
-
       {dialog === 'payment' && <RecordPaymentDialog onClose={() => setDialog(null)} />}
       {dialog === 'expense' && <AddExpenseDialog onClose={() => setDialog(null)} />}
       {dialog === 'attendance' && <MarkAttendanceDialog onClose={() => setDialog(null)} />}
-      {renewId && <RenewMembershipDialog memberId={renewId} onClose={() => setRenewId(null)} />}
+      {renew && <RenewMembershipDialog memberId={renew} onClose={() => setRenew(null)} />}
+      {pay && <RecordPaymentDialog memberId={pay} onClose={() => setPay(null)} />}
+      {message && <MessageDialog memberId={message} initialKind="congratulations" onClose={() => setMessage(null)} />}
     </div>
   );
 }

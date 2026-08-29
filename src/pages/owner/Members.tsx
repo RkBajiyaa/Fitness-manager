@@ -5,9 +5,10 @@ import {
 } from '../../components/ui/primitives';
 import { SearchInput, SelectField } from '../../components/ui/forms';
 import { DataTable, type Column } from '../../components/data/DataTable';
+import { LevelChip } from '../../components/owner/AttentionQueue';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
-import type { MemberSummary, MemberSort } from '../../lib/api';
+import type { MemberRow, MemberSort } from '../../lib/api';
 import type { MembershipStatus } from '../../lib/types';
 import { dateShort, money, phoneMask, relativeDay } from '../../lib/format';
 
@@ -23,6 +24,7 @@ export default function Members() {
   const [status, setStatus] = useState<StatusFilter>('all');
   const [planId, setPlanId] = useState('');
   const [hasDue, setHasDue] = useState(false);
+  const [attention, setAttention] = useState(false);
   const [sort, setSort] = useState<MemberSort>('name');
   const [order, setOrder] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
@@ -30,8 +32,13 @@ export default function Members() {
   const plans = useData(() => (session ? api.plans.list(session) : []), [session?.gymId]);
   const counts = useData(() => (session ? api.members.counts(session) : null), [session?.gymId]);
   const result = useData(
-    () => (session ? api.members.list(session, { q, status, planId: planId || undefined, hasDue, sort, order, page, limit: LIMIT }) : null),
-    [session?.gymId, q, status, planId, hasDue, sort, order, page],
+    () => (session
+      ? api.members.list(session, {
+        q, status, planId: planId || undefined, hasDue, attention,
+        sort, order, page, limit: LIMIT,
+      })
+      : null),
+    [session?.gymId, q, status, planId, hasDue, attention, sort, order, page],
   );
 
   if (!session || !result || !counts) return null;
@@ -43,10 +50,12 @@ export default function Members() {
     setPage(1);
   };
 
-  const reset = () => { setQ(''); setStatus('all'); setPlanId(''); setHasDue(false); setPage(1); };
-  const filtered = Boolean(q || status !== 'all' || planId || hasDue);
+  const reset = () => {
+    setQ(''); setStatus('all'); setPlanId(''); setHasDue(false); setAttention(false); setPage(1);
+  };
+  const filtered = Boolean(q || status !== 'all' || planId || hasDue || attention);
 
-  const columns: Array<Column<MemberSummary>> = [
+  const columns: Array<Column<MemberRow>> = [
     {
       key: 'name', header: 'Member', sortable: true, width: '30%',
       render: (r) => (
@@ -66,6 +75,20 @@ export default function Members() {
         : <span className="t-sm t-faint">—</span>,
     },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} daysLeft={r.daysLeft} /> },
+    {
+      key: 'engagement', header: 'Engagement', sortable: true,
+      render: (r) => (
+        <span>
+          <LevelChip level={r.engagement.level} />
+          <span className="t-xs t-faint" style={{ display: 'block', marginTop: 3 }}>
+            {r.engagement.recentPerWeek.toFixed(1)}/wk
+            {r.engagement.daysSinceVisit != null && r.engagement.daysSinceVisit > 2
+              ? ` · ${r.engagement.daysSinceVisit}d ago`
+              : ''}
+          </span>
+        </span>
+      ),
+    },
     {
       key: 'expiry', header: 'Expires', sortable: true,
       render: (r) => r.membership
@@ -93,7 +116,7 @@ export default function Members() {
     <div className="anim-page">
       <PageHead
         title="Members"
-        subtitle={`${counts.all.toLocaleString('en-IN')} on the roster · ${counts.active} active · ${counts.expiring} expiring · ${counts.withDues} with a balance`}
+        subtitle={`${counts.all} members · ${counts.active} active · ${counts.attention} need attention · ${counts.withDues} with a balance`}
         actions={<Button variant="primary" icon="userPlus" onClick={() => nav('/owner/members/new')}>Add member</Button>}
       />
 
@@ -121,6 +144,10 @@ export default function Members() {
               ))}
               <button className="chip" aria-pressed={hasDue} onClick={() => { setHasDue(!hasDue); setPage(1); }}>
                 Has balance<span className="u-num t-faint">{counts.withDues}</span>
+              </button>
+              <button className="chip" aria-pressed={attention}
+                onClick={() => { setAttention(!attention); setPage(1); }}>
+                Needs attention<span className="u-num t-faint">{counts.attention}</span>
               </button>
             </div>
 
@@ -160,11 +187,10 @@ export default function Members() {
                     {r.member.memberCode} · {r.membership?.planNameSnapshot ?? 'No plan'}
                     {r.membership && ` · ends ${dateShort(r.membership.endDate)}`}
                   </span>
-                  {r.dues.due > 0 && (
-                    <span style={{ display: 'inline-block', marginTop: 6 }}>
-                      <Badge tone="critical" icon="alert">{money(r.dues.due)} due</Badge>
-                    </span>
-                  )}
+                  <span className="u-row u-gap-2 u-wrap" style={{ marginTop: 6 }}>
+                    {r.engagement.level !== 'healthy' && <LevelChip level={r.engagement.level} />}
+                    {r.dues.due > 0 && <Badge tone="critical" icon="alert">{money(r.dues.due)} due</Badge>}
+                  </span>
                 </span>
               </>
             )}

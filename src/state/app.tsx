@@ -3,9 +3,13 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { ReactNode } from 'react';
-import type { Role, Session } from '../lib/types';
-import { getRevision, initDb, loadSession, makeSession, resetDatabase, saveSession, subscribe } from '../lib/db';
-import { Icon } from '../components/ui/Icon';
+import type { Session } from '../lib/types';
+import {
+  getRevision, initDb, isPersistenceDegraded, loadSession, resetDatabase,
+  resolveSession, saveSession, subscribe,
+} from '../lib/db';
+import { authAdapter, AuthError, type AuthIdentity } from '../lib/auth';
+import { Icon, type IconName } from '../components/ui/Icon';
 
 /* ============================================================
    Reactive glue: any component reading through lib/api re-runs
@@ -19,14 +23,11 @@ export function useData<T>(compute: () => T, deps: unknown[] = []): T {
 }
 
 /* ============================================================
-   Toasts
+   Toasts & confirmation
    ============================================================ */
 export type ToastTone = 'success' | 'error' | 'warning' | 'info';
 interface Toast { id: number; tone: ToastTone; title: string; message?: string }
 
-/* ============================================================
-   Confirmation
-   ============================================================ */
 interface ConfirmRequest {
   title: string;
   message: ReactNode;
@@ -35,43 +36,66 @@ interface ConfirmRequest {
   tone?: 'danger' | 'default';
 }
 
+/* ============================================================
+   Achievement moments (§50) — driven by real events only
+   ============================================================ */
+export interface CelebrationRequest {
+  icon?: IconName;
+  title: string;
+  message?: string;
+  stats?: Array<{ value: string; label: string }>;
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
 type Theme = 'light' | 'dark';
 
 interface AppValue {
   session: Session | null;
-  signIn: (role: Extract<Role, 'owner' | 'member'>) => void;
+  identity: AuthIdentity | null;
+  authReady: boolean;
+  signIn: (email: string, password: string) => Promise<Session>;
+  createAccount: (email: string, password: string, name: string) => Promise<Session>;
+  resetPassword: (email: string) => Promise<void>;
   signOut: () => void;
   toast: (tone: ToastTone, title: string, message?: string) => void;
   confirm: (req: ConfirmRequest) => Promise<boolean>;
+  celebrate: (req: CelebrationRequest) => void;
   theme: Theme;
   toggleTheme: () => void;
   reseed: () => void;
+  storageDegraded: boolean;
 }
 
 const Ctx = createContext<AppValue | null>(null);
 
-const THEME_KEY = 'gss.theme';
+const THEME_KEY = 'fm.theme';
 
+/** Light is the primary design (§7). Dark is opt-in, never inferred from the OS. */
 function initialTheme(): Theme {
   try {
     const saved = localStorage.getItem(THEME_KEY);
-    if (saved === 'light' || saved === 'dark') return saved;
+    if (saved === 'dark') return 'dark';
   } catch { /* ignore */ }
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return 'light';
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  // Seed + session resolve synchronously so the first paint is already correct
-  // (no flash of the landing screen for someone who is mid-session).
+  // Seed + session resolve synchronously so the first paint is already correct.
   const [session, setSession] = useState<Session | null>(() => {
     initDb();
     return loadSession();
   });
+  const [identity, setIdentity] = useState<AuthIdentity | null>(() => authAdapter.current());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
+  const [celebration, setCelebration] = useState<CelebrationRequest | null>(null);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const resolver = useRef<((ok: boolean) => void) | null>(null);
   const nextId = useRef(1);
+
+  // Re-reads on every store revision, like any other derived value.
+  const storageDegraded = useData(() => isPersistenceDegraded());
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -95,26 +119,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setConfirmReq(null);
   }, []);
 
+  /**
+   * Identity → session. The screen supplies credentials and nothing else;
+   * role and gym are resolved from stored data (docs/ARCHITECTURE.md §I.2).
+   */
+  const adopt = useCallback((id: AuthIdentity): Session => {
+    const resolved = resolveSession(id);
+    if (!resolved) {
+      throw new AuthError(
+        'user_not_found',
+        'That account is not linked to a gym yet. Ask your gym to add you as a member.',
+      );
+    }
+    saveSession(resolved);
+    setIdentity(id);
+    setSession(resolved);
+    return resolved;
+  }, []);
+
   const value = useMemo<AppValue>(() => ({
     session,
-    signIn: (role) => {
-      const s = makeSession(role);
-      saveSession(s);
-      setSession(s);
+    identity,
+    authReady: true,
+    signIn: async (email, password) => adopt(await authAdapter.signIn(email, password)),
+    createAccount: async (email, password, name) =>
+      adopt(await authAdapter.createAccount(email, password, name)),
+    resetPassword: (email) => authAdapter.sendPasswordReset(email),
+    signOut: () => {
+      void authAdapter.signOut();
+      saveSession(null);
+      setIdentity(null);
+      setSession(null);
     },
-    signOut: () => { saveSession(null); setSession(null); },
     toast,
     confirm,
+    celebrate: setCelebration,
     theme,
     toggleTheme: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
-    reseed: () => { resetDatabase(); toast('success', 'Demo data rebuilt', 'Every screen now reads from a fresh dataset.'); },
-  }), [session, toast, confirm, theme]);
+    reseed: () => {
+      resetDatabase();
+      toast('success', 'Demo data rebuilt', 'Every screen now reads from a fresh dataset.');
+    },
+    storageDegraded,
+  }), [session, identity, toast, confirm, theme, adopt, storageDegraded]);
 
   return (
     <Ctx.Provider value={value}>
       {children}
       <ToastRegion toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
       {confirmReq && <ConfirmDialog req={confirmReq} onClose={closeConfirm} />}
+      {celebration && <Celebration req={celebration} onClose={() => setCelebration(null)} />}
     </Ctx.Provider>
   );
 }
@@ -141,7 +195,7 @@ function ToastRegion({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: n
             style={{
               color: t.tone === 'success' ? 'var(--good)'
                 : t.tone === 'error' ? 'var(--critical)'
-                : t.tone === 'warning' ? 'var(--warning)' : 'var(--brand)',
+                : t.tone === 'warning' ? 'var(--warning)' : 'var(--text-2)',
             }}
           >
             <Icon name={TOAST_ICON[t.tone]} size={17} />
@@ -159,7 +213,7 @@ function ToastRegion({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: n
   );
 }
 
-/* ---------------- Confirmation dialog ---------------- */
+/* ---------------- Confirmation ---------------- */
 
 function ConfirmDialog({ req, onClose }: { req: ConfirmRequest; onClose: (ok: boolean) => void }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -181,8 +235,8 @@ function ConfirmDialog({ req, onClose }: { req: ConfirmRequest; onClose: (ok: bo
               style={{
                 width: 36, height: 36, flex: 'none', display: 'grid', placeItems: 'center',
                 borderRadius: 'var(--r-md)',
-                background: req.tone === 'danger' ? 'var(--critical-soft)' : 'var(--brand-soft)',
-                color: req.tone === 'danger' ? 'var(--critical)' : 'var(--brand)',
+                background: req.tone === 'danger' ? 'var(--critical-soft)' : 'var(--surface-3)',
+                color: req.tone === 'danger' ? 'var(--critical)' : 'var(--text-2)',
               }}
             >
               <Icon name={req.tone === 'danger' ? 'alert' : 'info'} size={18} />
@@ -205,6 +259,51 @@ function ConfirmDialog({ req, onClose }: { req: ConfirmRequest; onClose: (ok: bo
             {req.confirmLabel ?? 'Confirm'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Achievement moment ---------------- */
+
+function Celebration({ req, onClose }: { req: CelebrationRequest; onClose: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    ref.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="celebrate" role="dialog" aria-modal="true" aria-labelledby="celebrate-title"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="celebrate__card">
+        <div className="celebrate__badge">
+          <Icon name={req.icon ?? 'trophy'} size={34} strokeWidth={1.6} />
+        </div>
+        <h2 id="celebrate-title" className="celebrate__title">{req.title}</h2>
+        {req.message && <p className="celebrate__sub">{req.message}</p>}
+
+        {req.stats && req.stats.length > 0 && (
+          <div className="celebrate__stats">
+            {req.stats.map((s) => (
+              <div key={s.label}>
+                <div className="celebrate__stat-value u-num">{s.value}</div>
+                <div className="celebrate__stat-label">{s.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          ref={ref}
+          className="btn btn--primary btn--block btn--lg"
+          onClick={() => { req.onAction?.(); onClose(); }}
+        >
+          {req.actionLabel ?? 'Done'}
+        </button>
       </div>
     </div>
   );

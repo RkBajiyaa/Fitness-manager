@@ -9,13 +9,19 @@ import { moneyCompact } from '../lib/format';
 interface NavEntry { to: string; label: string; icon: IconName; end?: boolean }
 
 const GROUPS: Array<{ label: string; items: NavEntry[] }> = [
-  { label: 'Overview', items: [
+  { label: 'Studio', items: [
     { to: '/owner', label: 'Dashboard', icon: 'dashboard', end: true },
+    { to: '/owner/attention', label: 'Needs attention', icon: 'bell' },
   ] },
-  { label: 'People', items: [
+  { label: 'Members', items: [
     { to: '/owner/members', label: 'Members', icon: 'users' },
     { to: '/owner/memberships', label: 'Memberships', icon: 'card' },
     { to: '/owner/attendance', label: 'Attendance', icon: 'calendarCheck' },
+    { to: '/owner/messages', label: 'Communication', icon: 'message' },
+  ] },
+  { label: 'Coaching', items: [
+    { to: '/owner/programs', label: 'Programs', icon: 'route' },
+    { to: '/owner/exercises', label: 'Exercises', icon: 'library' },
   ] },
   { label: 'Money', items: [
     { to: '/owner/payments', label: 'Payments', icon: 'wallet' },
@@ -32,13 +38,13 @@ const GROUPS: Array<{ label: string; items: NavEntry[] }> = [
 
 const BOTTOM: NavEntry[] = [
   { to: '/owner', label: 'Home', icon: 'dashboard', end: true },
+  { to: '/owner/attention', label: 'Attention', icon: 'bell' },
   { to: '/owner/members', label: 'Members', icon: 'users' },
   { to: '/owner/payments', label: 'Payments', icon: 'wallet' },
-  { to: '/owner/attendance', label: 'Attendance', icon: 'calendarCheck' },
 ];
 
 export function OwnerLayout() {
-  const { session, signOut, theme, toggleTheme } = useApp();
+  const { session, signOut, theme, toggleTheme, storageDegraded, confirm } = useApp();
   const nav = useNavigate();
   const loc = useLocation();
   const [more, setMore] = useState(false);
@@ -48,7 +54,10 @@ export function OwnerLayout() {
   const kpis = useData(() => (session ? api.dashboard.get(session) : null), [session?.gymId]);
   const gym = useData(() => (session ? api.gyms.current(session) : null), [session?.gymId]);
 
-  const dueBadge = kpis && kpis.pendingCount > 0 ? kpis.pendingCount : undefined;
+  const signOutNow = async () => {
+    const ok = await confirm({ title: 'Sign out?', message: 'You will need to sign in again.', confirmLabel: 'Sign out' });
+    if (ok) { signOut(); nav('/', { replace: true }); }
+  };
 
   return (
     <div className="shell">
@@ -56,8 +65,10 @@ export function OwnerLayout() {
         <div className="sidebar__brand">
           <Logo size={30} />
           <div className="u-grow" style={{ minWidth: 0 }}>
-            <div className="t-sm u-truncate" style={{ fontWeight: 620 }}>{gym?.name}</div>
-            <div className="t-xs t-faint">Owner workspace</div>
+            <div className="t-sm u-truncate" style={{ fontWeight: 640, letterSpacing: '-0.012em' }}>
+              Fitness Manager
+            </div>
+            <div className="t-xs t-faint u-truncate">{gym?.name}</div>
           </div>
         </div>
 
@@ -69,8 +80,11 @@ export function OwnerLayout() {
                 <NavLink key={item.to} to={item.to} end={item.end} className="navitem">
                   <Icon name={item.icon} size={17} />
                   {item.label}
-                  {item.to === '/owner/payments' && dueBadge && (
-                    <span className="navitem__badge">{dueBadge}</span>
+                  {item.to === '/owner/attention' && kpis && kpis.needsAttention > 0 && (
+                    <span className="navitem__badge">{kpis.needsAttention}</span>
+                  )}
+                  {item.to === '/owner/payments' && kpis && kpis.pendingCount > 0 && (
+                    <span className="navitem__badge">{kpis.pendingCount}</span>
                   )}
                 </NavLink>
               ))}
@@ -83,8 +97,8 @@ export function OwnerLayout() {
             <Button size="sm" variant="ghost" icon={theme === 'dark' ? 'sun' : 'moon'}
               onClick={toggleTheme} aria-label="Toggle colour theme" />
             <Button size="sm" variant="ghost" icon="logout" className="u-grow"
-              onClick={() => { signOut(); nav('/'); }} style={{ justifyContent: 'flex-start' }}>
-              Switch role
+              onClick={signOutNow} style={{ justifyContent: 'flex-start' }}>
+              Sign out
             </Button>
           </div>
         </div>
@@ -94,7 +108,9 @@ export function OwnerLayout() {
         <header className="topbar">
           <span className="only-mobile u-row u-gap-2">
             <Logo size={26} />
-            <span className="t-sm u-truncate" style={{ fontWeight: 620, maxWidth: '42vw' }}>{gym?.name}</span>
+            <span className="t-sm u-truncate" style={{ fontWeight: 640, maxWidth: '38vw' }}>
+              Fitness Manager
+            </span>
           </span>
 
           <span className="hide-mobile u-grow" style={{ maxWidth: 380 }}>
@@ -106,6 +122,8 @@ export function OwnerLayout() {
           {kpis && (
             <span className="hide-mobile u-row u-gap-4 t-xs t-muted u-nowrap" style={{ marginRight: 4 }}>
               <span>Today <strong className="u-num" style={{ color: 'var(--text-1)' }}>{moneyCompact(kpis.revenueToday)}</strong></span>
+              <span className="t-faint">·</span>
+              <span>Sessions <strong className="u-num" style={{ color: 'var(--text-1)' }}>{kpis.sessionsToday}</strong></span>
               <span className="t-faint">·</span>
               <span>Inside <strong className="u-num" style={{ color: 'var(--text-1)' }}>
                 {kpis.insideNow == null ? '—' : kpis.insideNow}
@@ -120,6 +138,14 @@ export function OwnerLayout() {
           </Button>
         </header>
 
+        {storageDegraded && (
+          <div style={{ background: 'var(--warning-soft)', padding: 'var(--s-2) var(--s-6)' }}>
+            <span className="t-xs" style={{ color: 'var(--warning)' }}>
+              Local storage is full — changes made now will not survive a refresh.
+            </span>
+          </div>
+        )}
+
         <main className="content">
           <div className="content__inner"><Outlet /></div>
         </main>
@@ -128,7 +154,16 @@ export function OwnerLayout() {
       <nav className="bottomnav" aria-label="Primary">
         {BOTTOM.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end} className="bottomnav__item">
-            <span className="bottomnav__icon"><Icon name={item.icon} size={20} /></span>
+            <span className="bottomnav__icon">
+              <Icon name={item.icon} size={20} />
+              {item.to === '/owner/attention' && kpis && kpis.needsAttention > 0 && (
+                <span style={{
+                  position: 'absolute', top: -2, right: -8, minWidth: 15, height: 15,
+                  borderRadius: 999, background: 'var(--critical)', color: '#fff',
+                  fontSize: 9, fontWeight: 700, display: 'grid', placeItems: 'center', padding: '0 3px',
+                }}>{kpis.needsAttention}</span>
+              )}
+            </span>
             {item.label}
           </NavLink>
         ))}
@@ -141,7 +176,7 @@ export function OwnerLayout() {
       {more && (
         <>
           <div className="drawer-scrim" onClick={() => setMore(false)} />
-          <div className="drawer" role="dialog" aria-modal="true" aria-label="More sections">
+          <div className="drawer" role="dialog" aria-modal="true" aria-label="All sections">
             <div className="modal__grabber" />
             <div className="u-between u-mt-3 u-mb-3">
               <h2 className="t-h2">All sections</h2>
@@ -163,9 +198,8 @@ export function OwnerLayout() {
               <Button variant="secondary" icon={theme === 'dark' ? 'sun' : 'moon'} onClick={toggleTheme} className="u-grow">
                 {theme === 'dark' ? 'Light theme' : 'Dark theme'}
               </Button>
-              <Button variant="secondary" icon="logout" className="u-grow"
-                onClick={() => { signOut(); nav('/'); }}>
-                Switch role
+              <Button variant="secondary" icon="logout" className="u-grow" onClick={signOutNow}>
+                Sign out
               </Button>
             </div>
           </div>
@@ -175,7 +209,7 @@ export function OwnerLayout() {
   );
 }
 
-/** Type-ahead over members — the desktop owner's fastest path to one person. */
+/** Type-ahead over members — the fastest path to one person. */
 function OwnerQuickSearch() {
   const { session } = useApp();
   const nav = useNavigate();
@@ -183,9 +217,7 @@ function OwnerQuickSearch() {
   const [open, setOpen] = useState(false);
 
   const results = useData(
-    () => (session && q.trim().length >= 2
-      ? api.members.list(session, { q, limit: 6 }).data
-      : []),
+    () => (session && q.trim().length >= 2 ? api.members.list(session, { q, limit: 6 }).data : []),
     [session?.gymId, q],
   );
 
@@ -196,7 +228,7 @@ function OwnerQuickSearch() {
         <input
           className="input input--prefix"
           style={{ minHeight: 36 }}
-          placeholder="Search members by name, phone or ID"
+          placeholder="Search members"
           aria-label="Search members"
           value={q}
           onChange={(e) => { setQ(e.target.value); setOpen(true); }}
@@ -209,22 +241,24 @@ function OwnerQuickSearch() {
         />
       </span>
       {open && q.trim().length >= 2 && (
-        <div
-          className="card"
-          style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 40, boxShadow: 'var(--shadow-3)', overflow: 'hidden' }}
-        >
+        <div className="card" style={{
+          position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
+          zIndex: 40, boxShadow: 'var(--shadow-3)', overflow: 'hidden',
+        }}>
           {results.length === 0 ? (
             <div className="t-sm t-faint" style={{ padding: 'var(--s-4)' }}>No member matches “{q}”.</div>
           ) : results.map((r) => (
-            <button
-              key={r.member.id}
-              className="cardlist__item"
-              onMouseDown={() => nav(`/owner/members/${r.member.id}`)}
-            >
+            <button key={r.member.id} className="cardlist__item"
+              onMouseDown={() => nav(`/owner/members/${r.member.id}`)}>
               <span className="u-grow u-truncate">
                 <span className="t-sm" style={{ fontWeight: 560 }}>{r.member.name}</span>
                 <span className="t-xs t-faint" style={{ marginLeft: 8 }}>{r.member.memberCode}</span>
               </span>
+              {r.engagement.level !== 'healthy' && (
+                <span className={`levelchip levelchip--${r.engagement.level}`}>
+                  {r.engagement.level === 'attention' ? 'Attention' : 'Watch'}
+                </span>
+              )}
               <Icon name="chevronRight" size={15} className="t-faint" />
             </button>
           ))}

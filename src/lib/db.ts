@@ -1,17 +1,20 @@
 /* ============================================================
    Data-access layer. The ONLY module that touches storage.
+
    Every read and write is scoped by session.gymId — a screen
    cannot ask for another gym's rows because it never supplies
    the tenant key itself.
+
    Swap the body of load/persist for fetch + Postgres later;
    nothing above this layer changes.
    ============================================================ */
 import type { AuditLog, Database, Role, Session } from './types';
-import { buildSeed, DEMO_GYM_SLUG } from './seed';
+import type { AuthIdentity } from './auth';
+import { buildSeed } from './seed';
 
-const STORAGE_KEY = 'gss.db.v1';
-const SESSION_KEY = 'gss.session.v1';
-const SCHEMA_VERSION = 1;
+const STORAGE_KEY = 'fm.db.v2';
+const SESSION_KEY = 'fm.session.v2';
+const SCHEMA_VERSION = 2;
 
 let state: Database | null = null;
 let revision = 0;
@@ -24,7 +27,7 @@ function readStorage(): Database | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Database;
-    if (parsed.version !== SCHEMA_VERSION) return null;
+    if (parsed.version !== SCHEMA_VERSION) return null;   // older shape ⇒ reseed
     return parsed;
   } catch {
     return null;                     // corrupt or unavailable storage ⇒ reseed
@@ -32,15 +35,31 @@ function readStorage(): Database | null {
 }
 
 let saveTimer: number | undefined;
+let persistFailed = false;
+
+/** True once a write to localStorage has failed (quota, private mode). */
+export function isPersistenceDegraded(): boolean {
+  return persistFailed;
+}
+
 function persist(): void {
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      persistFailed = false;
     } catch {
-      /* quota or private mode — the session still works in memory */
+      // Quota exceeded or private mode. The session keeps working from memory,
+      // but the user must be told rather than silently losing their changes.
+      if (!persistFailed) {
+        persistFailed = true;
+        console.warn(
+          '[Fitness Manager] Could not save to local storage — changes will be lost on refresh.',
+        );
+        listeners.forEach((l) => l());
+      }
     }
-  }, 250);
+  }, 300);
 }
 
 export function initDb(): Database {
@@ -69,6 +88,7 @@ export function commit(mutator: (db: Database) => void): void {
   const db = getDb();
   mutator(db);
   revision++;
+  memoStore.clear();                 // derived caches belong to one revision
   persist();
   listeners.forEach((l) => l());
 }
@@ -76,8 +96,25 @@ export function commit(mutator: (db: Database) => void): void {
 export function resetDatabase(): void {
   state = buildSeed();
   revision++;
+  memoStore.clear();
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
   listeners.forEach((l) => l());
+}
+
+/* ---------------- derived-value cache ----------------
+   Expensive owner-wide derivations (engagement across the whole
+   roster, personal records across all sessions) are computed once
+   per revision and reused by every screen that asks. Cleared on
+   every write, so it can never serve stale data.
+   ---------------------------------------------------- */
+
+const memoStore = new Map<string, unknown>();
+
+export function memo<T>(key: string, compute: () => T): T {
+  if (memoStore.has(key)) return memoStore.get(key) as T;
+  const value = compute();
+  memoStore.set(key, value);
+  return value;
 }
 
 /* ---------------- session ---------------- */
@@ -99,22 +136,38 @@ export function saveSession(s: Session | null): void {
 }
 
 /**
- * Fabricates what a JWT will carry later: { gymId, role, userId, memberId }.
- * Replacing the landing screen with a login means replacing this function only.
+ * Identity → authorisation (docs/ARCHITECTURE.md §I.2).
+ *
+ * The caller supplies a verified identity and NOTHING ELSE. Role, gym and
+ * member linkage are resolved here, from stored data. In production this
+ * function moves server-side and the identity arrives as a verified Firebase
+ * token — the shape it returns is unchanged, which is why no screen cares.
  */
-export function makeSession(role: Extract<Role, 'owner' | 'member'>): Session {
+export function resolveSession(identity: AuthIdentity): Session | null {
   const db = getDb();
-  const gym = db.gyms.find((g) => g.slug === DEMO_GYM_SLUG) ?? db.gyms[0];
+  const email = identity.email.trim().toLowerCase();
   const user =
-    db.users.find((u) => u.gymId === gym.id && u.role === role) ??
-    db.users.find((u) => u.gymId === gym.id)!;
+    db.users.find((u) => u.authUid === identity.uid) ??
+    db.users.find((u) => u.email.trim().toLowerCase() === email);
+  if (!user || !user.gymId) return null;
+
   return {
-    gymId: gym.id,
-    role,
+    gymId: user.gymId,
+    role: user.role,
     userId: user.id,
-    memberId: role === 'member' ? (user.memberId ?? null) : null,
+    memberId: user.role === 'member' ? (user.memberId ?? null) : null,
     name: user.name,
+    email: user.email,
   };
+}
+
+/** Which roles a verified identity can actually sign in as. */
+export function rolesFor(identity: AuthIdentity): Role[] {
+  const db = getDb();
+  const email = identity.email.trim().toLowerCase();
+  return db.users
+    .filter((u) => u.authUid === identity.uid || u.email.trim().toLowerCase() === email)
+    .map((u) => u.role);
 }
 
 /* ---------------- the three gates (§E) ---------------- */
