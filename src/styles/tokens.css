@@ -1,0 +1,145 @@
+/* ============================================================
+   Design tokens — the single source of visual truth.
+   No component hard-codes a colour, radius, gap or duration.
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- Surfaces & ink ---- */
+  --bg:             #f5f7fa;
+  --surface-1:      #ffffff;
+  --surface-2:      #fafbfc;
+  --surface-3:      #f1f3f6;
+  --surface-inset:  #eef1f5;
+  --border:         #e3e7ec;
+  --border-strong:  #cdd4dd;
+  --text-1:         #101828;
+  --text-2:         #4a5567;
+  --text-3:         #7b8698;
+  --text-inverse:   #ffffff;
+
+  /* ---- Brand ---- */
+  --brand:          #256abf;
+  --brand-hover:    #1c5cab;
+  --brand-active:   #184f95;
+  --brand-soft:     #e9f1fc;
+  --brand-soft-2:   #d7e6fa;
+  --brand-ink:      #ffffff;
+  --brand-ring:     rgba(37, 106, 191, 0.35);
+
+  /* ---- Status (fixed, never themed as series) ---- */
+  --good:           #0ca30c;
+  --good-soft:      #e4f6e4;
+  --warning:        #b57600;
+  --warning-mark:   #fab219;
+  --warning-soft:   #fdf3dc;
+  --serious:        #c2582a;
+  --serious-soft:   #fbeae1;
+  --critical:       #d03b3b;
+  --critical-soft:  #fbe8e8;
+  --neutral-soft:   #eef1f5;
+
+  /* ---- Chart series (validated: see docs/ARCHITECTURE.md) ---- */
+  --series-1:       #2a78d6;  /* blue   */
+  --series-2:       #eb6834;  /* orange */
+  --series-3:       #1baf7a;  /* aqua   */
+  --series-1-wash:  rgba(42, 120, 214, 0.10);
+  --series-2-wash:  rgba(235, 104, 52, 0.10);
+  --series-3-wash:  rgba(27, 175, 122, 0.10);
+  --diverge-pos:    #2a78d6;
+  --diverge-neg:    #d03b3b;
+  --grid:           #e8ebef;
+  --chart-surface:  var(--surface-1);
+
+  /* ---- Space scale ---- */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 40px;
+  --s-9: 48px; --s-10: 64px;
+
+  /* ---- Radius ---- */
+  --r-sm: 6px; --r-md: 9px; --r-lg: 13px; --r-xl: 18px; --r-full: 999px;
+
+  /* ---- Elevation ---- */
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-2: 0 2px 4px -1px rgba(16, 24, 40, 0.06), 0 4px 12px -2px rgba(16, 24, 40, 0.07);
+  --shadow-3: 0 8px 16px -4px rgba(16, 24, 40, 0.10), 0 20px 40px -8px rgba(16, 24, 40, 0.14);
+  --shadow-nav: 0 -1px 0 var(--border), 0 -8px 24px -12px rgba(16, 24, 40, 0.18);
+
+  /* ---- Type ---- */
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          'Helvetica Neue', Arial, sans-serif;
+  --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-14: 14px;
+  --fs-15: 15px; --fs-16: 16px; --fs-18: 18px; --fs-20: 20px;
+  --fs-24: 24px; --fs-28: 28px; --fs-34: 34px; --fs-44: 44px;
+
+  /* ---- Motion ---- */
+  --dur-fast: 120ms;
+  --dur:      180ms;
+  --dur-slow: 280ms;
+  --ease:     cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ---- Layout ---- */
+  --sidebar-w: 244px;
+  --rail-w: 72px;
+  --bottomnav-h: 60px;
+  --topbar-h: 58px;
+  --member-max: 560px;
+  --content-max: 1600px;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+
+/* ---- Dark mode: selected steps, not an inversion ---- */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg:             #0d1015;
+  --surface-1:      #161a21;
+  --surface-2:      #1b2029;
+  --surface-3:      #212734;
+  --surface-inset:  #1a1f27;
+  --border:         #262d39;
+  --border-strong:  #3a4351;
+  --text-1:         #edf1f7;
+  --text-2:         #a4aebe;
+  --text-3:         #788394;
+  --text-inverse:   #0d1015;
+
+  --brand:          #4d8ee8;
+  --brand-hover:    #6da7ec;
+  --brand-active:   #86b6ef;
+  --brand-soft:     #17233a;
+  --brand-soft-2:   #1d3050;
+  --brand-ink:      #08111f;
+  --brand-ring:     rgba(109, 167, 236, 0.45);
+
+  --good:           #3fc23f;
+  --good-soft:      #122a12;
+  --warning:        #e0a41c;
+  --warning-mark:   #fab219;
+  --warning-soft:   #2c2410;
+  --serious:        #ec835a;
+  --serious-soft:   #2e1d14;
+  --critical:       #ef6a6a;
+  --critical-soft:  #2f1618;
+  --neutral-soft:   #212734;
+
+  --series-1:       #3987e5;
+  --series-2:       #d95926;
+  --series-3:       #199e70;
+  --series-1-wash:  rgba(57, 135, 229, 0.14);
+  --series-2-wash:  rgba(217, 89, 38, 0.14);
+  --series-3-wash:  rgba(25, 158, 112, 0.14);
+  --diverge-pos:    #3987e5;
+  --diverge-neg:    #ef6a6a;
+  --grid:           #242b36;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 2px 4px -1px rgba(0, 0, 0, 0.4), 0 4px 12px -2px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 8px 16px -4px rgba(0, 0, 0, 0.5), 0 20px 40px -8px rgba(0, 0, 0, 0.6);
+  --shadow-nav: 0 -1px 0 var(--border), 0 -8px 24px -12px rgba(0, 0, 0, 0.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur: 0ms; --dur-slow: 0ms; }
+}
