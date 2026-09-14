@@ -343,16 +343,27 @@
    Owner — attention queue
    ========================================================== */
 .attnrow {
+  position: relative;                 /* anchors the stretched link */
   display: flex; align-items: flex-start; gap: var(--s-3);
   width: 100%; text-align: left; padding: var(--s-4);
   border: 0; border-bottom: 1px solid var(--border);
-  background: transparent; color: inherit; font: inherit; cursor: pointer;
+  background: transparent; color: inherit; font: inherit;
   transition: background var(--dur-fast) var(--ease);
 }
 .attnrow:last-child { border-bottom: 0; }
 .attnrow:hover { background: var(--surface-2); }
 .attnrow__bar { width: 3px; align-self: stretch; border-radius: 2px; flex: none; }
 .attnrow__name { font-size: var(--fs-14); font-weight: 580; }
+
+/*
+  Stretched link: the member's name is the only navigation control, but its
+  hit area covers the whole row. The action buttons are lifted above it, so
+  the row stays one big target without a <button> inside a <button>.
+*/
+.attnrow__link { color: inherit; text-decoration: none; }
+.attnrow__link::after { content: ''; position: absolute; inset: 0; }
+.attnrow__link:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: var(--r-sm); }
+.attnrow__actions { position: relative; z-index: 1; }
 .signals { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
 .signal {
   display: flex; align-items: flex-start; gap: 6px;

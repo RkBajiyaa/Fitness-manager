@@ -1,58 +1,92 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon, Logo, type IconName } from '../components/ui/Icon';
 import { Button } from '../components/ui/primitives';
 import { useApp, useData } from '../state/app';
 import * as api from '../lib/api';
 import { moneyCompact } from '../lib/format';
+import type { FeatureKey } from '../lib/platform/catalog';
 
-interface NavEntry { to: string; label: string; icon: IconName; end?: boolean }
+/**
+ * `feature` gates the entry. `anyOf` is for sections that more than one
+ * entitlement can unlock (Communication needs WhatsApp *or* Email).
+ *
+ * Navigation is built from what the gym ACTUALLY HAS. A simple studio on
+ * Basic sees four sections and no dead buttons; nobody has to scroll past
+ * modules they were never sold. This is the visible half of the
+ * entitlement model — the API enforces the same rule independently.
+ */
+interface NavEntry {
+  to: string; label: string; icon: IconName; end?: boolean;
+  feature?: FeatureKey;
+  anyOf?: FeatureKey[];
+}
 
 const GROUPS: Array<{ label: string; items: NavEntry[] }> = [
   { label: 'Studio', items: [
     { to: '/owner', label: 'Dashboard', icon: 'dashboard', end: true },
-    { to: '/owner/attention', label: 'Needs attention', icon: 'bell' },
+    { to: '/owner/attention', label: 'Needs attention', icon: 'bell', feature: 'member_management' },
   ] },
   { label: 'Members', items: [
-    { to: '/owner/members', label: 'Members', icon: 'users' },
-    { to: '/owner/memberships', label: 'Memberships', icon: 'card' },
-    { to: '/owner/attendance', label: 'Attendance', icon: 'calendarCheck' },
-    { to: '/owner/messages', label: 'Communication', icon: 'message' },
+    { to: '/owner/members', label: 'Members', icon: 'users', feature: 'member_management' },
+    { to: '/owner/memberships', label: 'Memberships', icon: 'card', feature: 'memberships' },
+    { to: '/owner/attendance', label: 'Attendance', icon: 'calendarCheck', feature: 'attendance' },
+    { to: '/owner/messages', label: 'Communication', icon: 'message', anyOf: ['whatsapp', 'email'] },
   ] },
   { label: 'Coaching', items: [
-    { to: '/owner/programs', label: 'Programs', icon: 'route' },
-    { to: '/owner/exercises', label: 'Exercises', icon: 'library' },
+    { to: '/owner/programs', label: 'Programs', icon: 'route', feature: 'workout_programs' },
+    { to: '/owner/exercises', label: 'Exercises', icon: 'library', feature: 'exercise_library' },
   ] },
   { label: 'Money', items: [
-    { to: '/owner/payments', label: 'Payments', icon: 'wallet' },
-    { to: '/owner/expenses', label: 'Expenses', icon: 'receipt' },
-    { to: '/owner/revenue', label: 'Revenue', icon: 'trendingUp' },
-    { to: '/owner/profit-loss', label: 'Profit & Loss', icon: 'chart' },
+    { to: '/owner/payments', label: 'Payments', icon: 'wallet', feature: 'payments' },
+    { to: '/owner/expenses', label: 'Expenses', icon: 'receipt', feature: 'expenses' },
+    { to: '/owner/revenue', label: 'Revenue', icon: 'trendingUp', feature: 'revenue' },
+    { to: '/owner/profit-loss', label: 'Profit & Loss', icon: 'chart', feature: 'revenue' },
   ] },
   { label: 'Business', items: [
-    { to: '/owner/reports', label: 'Reports', icon: 'pie' },
-    { to: '/owner/plans', label: 'Plans', icon: 'layers' },
+    { to: '/owner/reports', label: 'Reports', icon: 'pie', feature: 'reports' },
+    { to: '/owner/plans', label: 'Plans', icon: 'layers', feature: 'membership_plans' },
+    { to: '/owner/features', label: 'Features', icon: 'sparkles' },
     { to: '/owner/settings', label: 'Settings', icon: 'settings' },
   ] },
 ];
 
 const BOTTOM: NavEntry[] = [
   { to: '/owner', label: 'Home', icon: 'dashboard', end: true },
-  { to: '/owner/attention', label: 'Attention', icon: 'bell' },
-  { to: '/owner/members', label: 'Members', icon: 'users' },
-  { to: '/owner/payments', label: 'Payments', icon: 'wallet' },
+  { to: '/owner/attention', label: 'Attention', icon: 'bell', feature: 'member_management' },
+  { to: '/owner/members', label: 'Members', icon: 'users', feature: 'member_management' },
+  { to: '/owner/payments', label: 'Payments', icon: 'wallet', feature: 'payments' },
 ];
 
 export function OwnerLayout() {
-  const { session, signOut, theme, toggleTheme, storageDegraded, confirm } = useApp();
+  const { session, signOut, theme, toggleTheme, storageDegraded, confirm, has } = useApp();
   const nav = useNavigate();
   const loc = useLocation();
-  const [more, setMore] = useState(false);
+  /*
+    The drawer belongs to the route it was opened on. Deriving that from the
+    pathname closes it on navigation without an effect, which means no second
+    render pass on every single navigation.
+  */
+  const [moreAt, setMoreAt] = useState<string | null>(null);
+  const more = moreAt === loc.pathname;
+  const setMore = (open: boolean) => setMoreAt(open ? loc.pathname : null);
 
-  useEffect(() => { setMore(false); }, [loc.pathname]);
-
-  const kpis = useData(() => (session ? api.dashboard.get(session) : null), [session?.gymId]);
+  // Defensive: the dashboard summary reads across modules, and a gym can
+  // legitimately have some of them switched off.
+  const kpis = useData(() => {
+    if (!session) return null;
+    try { return api.dashboard.get(session); } catch { return null; }
+  }, [session?.gymId]);
   const gym = useData(() => (session ? api.gyms.current(session) : null), [session?.gymId]);
+
+  const allowed = (item: NavEntry) =>
+    (!item.feature || has(item.feature))
+    && (!item.anyOf || item.anyOf.some((f) => has(f)));
+
+  const groups = GROUPS
+    .map((g) => ({ ...g, items: g.items.filter(allowed) }))
+    .filter((g) => g.items.length > 0);
+  const bottom = BOTTOM.filter(allowed);
 
   const signOutNow = async () => {
     const ok = await confirm({ title: 'Sign out?', message: 'You will need to sign in again.', confirmLabel: 'Sign out' });
@@ -73,7 +107,7 @@ export function OwnerLayout() {
         </div>
 
         <nav className="sidebar__nav" aria-label="Main">
-          {GROUPS.map((g) => (
+          {groups.map((g) => (
             <div className="sidebar__group" key={g.label}>
               <div className="sidebar__grouplabel">{g.label}</div>
               {g.items.map((item) => (
@@ -113,9 +147,11 @@ export function OwnerLayout() {
             </span>
           </span>
 
-          <span className="hide-mobile u-grow" style={{ maxWidth: 380 }}>
-            <OwnerQuickSearch />
-          </span>
+          {has('member_management') && (
+            <span className="hide-mobile u-grow" style={{ maxWidth: 380 }}>
+              <OwnerQuickSearch />
+            </span>
+          )}
 
           <span className="u-grow" />
 
@@ -131,11 +167,15 @@ export function OwnerLayout() {
             </span>
           )}
 
-          <Button className="only-mobile" size="sm" variant="ghost" icon="search"
-            onClick={() => nav('/owner/members')} aria-label="Search members" />
-          <Button size="sm" variant="primary" icon="plus" onClick={() => nav('/owner/members/new')}>
-            <span className="hide-mobile">Add member</span>
-          </Button>
+          {has('member_management') && (
+            <>
+              <Button className="only-mobile" size="sm" variant="ghost" icon="search"
+                onClick={() => nav('/owner/members')} aria-label="Search members" />
+              <Button size="sm" variant="primary" icon="plus" onClick={() => nav('/owner/members/new')}>
+                <span className="hide-mobile">Add member</span>
+              </Button>
+            </>
+          )}
         </header>
 
         {storageDegraded && (
@@ -152,7 +192,7 @@ export function OwnerLayout() {
       </div>
 
       <nav className="bottomnav" aria-label="Primary">
-        {BOTTOM.map((item) => (
+        {bottom.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end} className="bottomnav__item">
             <span className="bottomnav__icon">
               <Icon name={item.icon} size={20} />
@@ -182,7 +222,7 @@ export function OwnerLayout() {
               <h2 className="t-h2">All sections</h2>
               <Button size="sm" variant="ghost" icon="x" onClick={() => setMore(false)} aria-label="Close" />
             </div>
-            {GROUPS.map((g) => (
+            {groups.map((g) => (
               <div key={g.label} className="u-mb-4">
                 <div className="sidebar__grouplabel">{g.label}</div>
                 {g.items.map((item) => (

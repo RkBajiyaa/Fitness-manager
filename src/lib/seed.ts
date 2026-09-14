@@ -11,10 +11,13 @@
    derivations rather than decoration.
    ============================================================ */
 import type {
-  Database, DietPlan, Exercise, ExpenseCategory, FitnessProfile,
-  Gym, ISODate, Member, Membership, MembershipPlan, PaymentMethod, Program,
-  ProgramDay, ProgramExercise, SessionSet, WorkoutSession,
+  Database, DietPlan, Exercise, ExpenseCategory, FeaturePackage, FitnessProfile,
+  Gym, GymSetup, ISODate, Member, Membership, MembershipPlan, OperatingHours,
+  PaymentMethod, PaymentSettings, PlatformFeature, PlatformSettings, Program,
+  ProgramDay, ProgramExercise, SessionSet, Subscription, WorkoutSession,
 } from './types';
+import { FEATURE_CATALOG } from './platform/catalog';
+import { DEFAULT_PACKAGE_KEY, PACKAGE_SEEDS } from './platform/packages';
 import { addDays, addMonths, dayOf, diffDays, monthKey, rangeDays, todayISO, toISO, parseISO, startOfMonth } from './date';
 
 /* ---- deterministic PRNG ---- */
@@ -132,6 +135,53 @@ const VARIABLE_EXPENSES: Array<{ category: ExpenseCategory; description: string;
   { category: 'other',       description: 'Towels, water & pantry',     vendor: 'AquaFresh',       min: 4000,  max: 9000 },
 ];
 
+/** Six days open, Sunday short — a sensible default the owner can edit. */
+export function defaultHours(): OperatingHours[] {
+  return [
+    { open: '07:00', close: '13:00', closed: false },   // Sunday
+    { open: '05:30', close: '22:00', closed: false },
+    { open: '05:30', close: '22:00', closed: false },
+    { open: '05:30', close: '22:00', closed: false },
+    { open: '05:30', close: '22:00', closed: false },
+    { open: '05:30', close: '22:00', closed: false },
+    { open: '06:00', close: '20:00', closed: false },
+  ];
+}
+
+/**
+ * Configuration only — `gatewayConnected` is false and stays false
+ * until a real integration phase. Nothing in the app pretends a
+ * gateway exists.
+ */
+export function defaultPaymentSettings(): PaymentSettings {
+  return {
+    methods: ['cash', 'upi', 'card', 'bank_transfer'],
+    upiId: '', bankAccountName: '', bankAccountNumber: '', bankIfsc: '',
+    gatewayProvider: 'none', gatewayConnected: false,
+    invoicePrefix: 'INV', taxNote: '',
+  };
+}
+
+export function freshSetup(now = new Date().toISOString()): GymSetup {
+  return {
+    steps: {
+      profile: 'pending', plans: 'pending', payments: 'pending',
+      features: 'pending', first_member: 'pending',
+    },
+    startedAt: now, completedAt: null, dismissed: false,
+  };
+}
+
+export function completedSetup(now = new Date().toISOString()): GymSetup {
+  return {
+    steps: {
+      profile: 'done', plans: 'done', payments: 'done',
+      features: 'done', first_member: 'done',
+    },
+    startedAt: now, completedAt: now, dismissed: true,
+  };
+}
+
 function makeGym(name: string, slug: string, area: string, n: number): Gym {
   return {
     id: `gym_${slug}`, name, slug,
@@ -140,6 +190,9 @@ function makeGym(name: string, slug: string, area: string, n: number): Gym {
     address: `${int(1, 60)}, ${pick(STREETS)}, ${area}, Bengaluru 560${String(n).padStart(3, '0')}`,
     currency: 'INR', timezone: 'Asia/Kolkata',
     createdAt: new Date(2023, 4, 12).toISOString(),
+    status: 'active', dataMode: 'demo', kind: 'studio',
+    logoUrl: '', hours: defaultHours(), payment: defaultPaymentSettings(),
+    setup: completedSetup(new Date(2023, 4, 12).toISOString()),
   };
 }
 
@@ -405,8 +458,10 @@ function seedDietPlan(gymId: string, db: Database): DietPlan {
   ];
   const plan: DietPlan = {
     id: id('dpl'), gymId, memberId: null, name: 'Lean gain — 2,450 kcal', waterTargetL: 3.5,
-    items: rows.map(([meal, item, qty, calories, protein, carbs, fat]) => ({
-      id: id('ditm'), meal, item, qty, calories, protein, carbs, fat,
+    source: 'assigned', notes: 'Built for members in a lean-gain block. Adjust portions with your coach.',
+    updatedAt: new Date().toISOString(),
+    items: rows.map(([meal, item, qty, calories, protein, carbs, fat], i) => ({
+      id: id('ditm'), meal, order: i, item, qty, calories, protein, carbs, fat,
     })),
   };
   db.dietPlans.push(plan);
@@ -467,6 +522,7 @@ function buildGym(gym: Gym, db: Database, opts: BuildOpts, today: ISODate): void
       },
       photoUrl: '', joinedAt, lifecycle: 'active',
       fitness: makeFitnessProfile(),
+      onboardedAt: timeAt(joinedAt, 11, 15),
     };
     db.members.push(member);
 
@@ -831,7 +887,7 @@ function seedTraining(
       if (!sets.length) return;
       const durationSec = int(45, 95) * 60;
       const session: WorkoutSession = {
-        id: sessionId, gymId, memberId: m.id, date,
+        id: sessionId, gymId, memberId: m.id, date, memberWorkoutId: null,
         startedAt,
         finishedAt: new Date(new Date(startedAt).getTime() + durationSec * 1000).toISOString(),
         programDayId: day?.id ?? null,
@@ -991,24 +1047,203 @@ function seedAnnouncements(db: Database, gymId: string): void {
   });
 }
 
-export function buildSeed(): Database {
-  const today = todayISO();
-  const db: Database = {
-    version: 2, gyms: [], users: [], members: [], plans: [], memberships: [], payments: [],
-    attendance: [], exercises: [], programs: [], sessions: [], measurements: [], goals: [],
-    water: [], dietPlans: [], mealCompletions: [], expenses: [], notes: [], messages: [],
-    announcements: [], audit: [],
+/* ============================================================
+   Platform bootstrap — what exists before any customer does
+   ============================================================ */
+
+function platformFeatures(): PlatformFeature[] {
+  return FEATURE_CATALOG.map((f) => ({
+    key: f.key, name: f.name, category: f.category, description: f.description,
+    delivery: f.delivery, requires: f.requires ?? [], foundational: Boolean(f.foundational),
+    archived: false,
+  }));
+}
+
+function platformPackages(now: string): FeaturePackage[] {
+  return PACKAGE_SEEDS.map((pkg) => ({
+    id: `pkg_${pkg.key}`, key: pkg.key, name: pkg.name, description: pkg.description,
+    features: [...pkg.features], isDefault: pkg.isDefault, isSystem: Boolean(pkg.isSystem),
+    order: pkg.order, createdAt: now,
+  }));
+}
+
+function platformSettings(): PlatformSettings {
+  return {
+    platformName: 'Fitness Manager',
+    supportEmail: 'support@fitnessmanager.app',
+    defaultPackageKey: DEFAULT_PACKAGE_KEY,
+    demoModeEnabled: true,
+    selfServeSignupEnabled: true,
+    newGymStatus: 'active',
   };
+}
+
+function emptyDatabase(): Database {
+  const now = new Date().toISOString();
+  return {
+    version: 3,
+    features: platformFeatures(),
+    packages: platformPackages(now),
+    subscriptions: [], overrides: [], platformAudit: [], platformUpdates: [],
+    settings: platformSettings(),
+    gyms: [], users: [], members: [], plans: [], memberships: [], payments: [],
+    attendance: [], exercises: [], programs: [], sessions: [], measurements: [], goals: [],
+    water: [], dietPlans: [], mealCompletions: [], workouts: [], expenses: [], notes: [],
+    messages: [], announcements: [], audit: [],
+  };
+}
+
+/**
+ * First boot. The platform exists; NO CUSTOMER DOES.
+ *
+ * The global exercise library ships with the platform because it is
+ * platform-owned content (scope `global`) — a brand-new gym with an
+ * empty exercise list would be a worse product, and none of it is
+ * pretend business data.
+ */
+export function buildPlatform(): Database {
+  const db = emptyDatabase();
   db.exercises = buildExercises();
 
-  buildGym(makeGym('Atlas Performance Club', 'atlas', 'Indiranagar', 38), db,
-    { memberCount: 52, attendanceDays: 63, rich: true }, today);
+  db.users.push({
+    id: 'user_platform_admin', gymId: null, role: 'platform_admin',
+    name: 'Platform Admin', phone: '', email: ADMIN_EMAIL,
+    authProvider: 'demo', authUid: 'demo-admin',
+  });
 
-  // A second tenant. Never rendered — its existence is the isolation test.
-  buildGym(makeGym('Meridian Strength Studio', 'meridian', 'Sadashivanagar', 80), db,
-    { memberCount: 11, attendanceDays: 0, rich: false }, today);
+  db.platformUpdates.push({
+    id: 'pupd_0001', kind: 'product',
+    title: 'Feature entitlements are live',
+    body: 'Packages now carry a default set of features, and any customer can be overridden feature by feature from the platform console.',
+    createdAt: new Date().toISOString(), publishedAt: new Date().toISOString(),
+    audience: 'owners',
+  });
 
   return db;
 }
 
+export const ADMIN_EMAIL = 'admin@fitnessmanager.demo';
+export const DEMO_GYM_ID = 'gym_atlas';
 export const DEMO_GYM_SLUG = 'atlas';
+
+/* ============================================================
+   Demo workspace — built ON DEMAND, never on first boot
+   ============================================================ */
+
+/**
+ * Materialises the demonstration studios. Called only when somebody
+ * explicitly chooses "Explore with demo data", which is what keeps a
+ * real customer's first sign-in genuinely empty.
+ *
+ * Demo data is isolated by the SAME tenant gate that separates two
+ * real customers — there is no second isolation mechanism that could
+ * disagree with the first. The gyms are additionally flagged
+ * `dataMode: 'demo'` so every surface can label them honestly.
+ */
+export function buildDemoWorkspace(db: Database): void {
+  if (db.gyms.some((g) => g.id === DEMO_GYM_ID)) return;   // already built
+  const today = todayISO();
+
+  if (!db.exercises.length) db.exercises = buildExercises();
+
+  buildGym(makeGym('Atlas Performance Club', 'atlas', 'Indiranagar', 38), db,
+    { memberCount: 52, attendanceDays: 63, rich: true }, today);
+
+  // A second tenant. Never rendered in the gym app — its existence is
+  // the isolation test, and the platform console is the one place it
+  // legitimately shows up.
+  buildGym(makeGym('Meridian Strength Studio', 'meridian', 'Sadashivanagar', 80), db,
+    { memberCount: 11, attendanceDays: 0, rich: false }, today);
+
+  // Demo customers are on real packages, so entitlement behaviour is
+  // demonstrable: Atlas is Premium, Meridian is Basic.
+  subscribe(db, 'gym_atlas', 'pkg_premium', 'active');
+  subscribe(db, 'gym_meridian', 'pkg_basic', 'active');
+}
+
+function subscribe(db: Database, gymId: string, packageId: string, status: Subscription['status']): void {
+  if (db.subscriptions.some((x) => x.gymId === gymId)) return;
+  const now = new Date().toISOString();
+  db.subscriptions.push({
+    id: id('sub'), gymId, packageId, status,
+    startedAt: todayISO(), renewsAt: null, notes: '', updatedAt: now,
+  });
+}
+
+/** Removes the demo workspace and every row that belongs to it. */
+export function clearDemoWorkspace(db: Database): void {
+  const demoIds = new Set(db.gyms.filter((g) => g.dataMode === 'demo').map((g) => g.id));
+  if (!demoIds.size) return;
+  const keep = <T extends { gymId: string }>(rows: T[]) => rows.filter((r) => !demoIds.has(r.gymId));
+
+  // Collected BEFORE the member rows are dropped — member-scoped
+  // exercises are keyed by memberId, not gymId.
+  const demoMemberIds = new Set(db.members.filter((m) => demoIds.has(m.gymId)).map((m) => m.id));
+
+  db.gyms = db.gyms.filter((g) => !demoIds.has(g.id));
+  db.users = db.users.filter((u) => !u.gymId || !demoIds.has(u.gymId));
+  db.members = keep(db.members);
+  db.plans = keep(db.plans);
+  db.memberships = keep(db.memberships);
+  db.payments = keep(db.payments);
+  db.attendance = keep(db.attendance);
+  db.programs = keep(db.programs);
+  db.sessions = keep(db.sessions);
+  db.measurements = keep(db.measurements);
+  db.goals = keep(db.goals);
+  db.water = keep(db.water);
+  db.dietPlans = keep(db.dietPlans);
+  db.mealCompletions = keep(db.mealCompletions);
+  db.workouts = keep(db.workouts);
+  db.expenses = keep(db.expenses);
+  db.notes = keep(db.notes);
+  db.messages = keep(db.messages);
+  db.announcements = keep(db.announcements);
+  db.audit = keep(db.audit);
+  db.subscriptions = db.subscriptions.filter((x) => !demoIds.has(x.gymId));
+  db.overrides = db.overrides.filter((x) => !demoIds.has(x.gymId));
+  // Member-scoped exercises created inside the demo tenant.
+  db.exercises = db.exercises.filter(
+    (e) => e.scope !== 'member' || !e.ownerId || !demoMemberIds.has(e.ownerId));
+}
+
+/* ============================================================
+   A brand-new, EMPTY customer
+   ============================================================ */
+
+let freshSeq = 0;
+
+function slugify(name: string): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return base || 'studio';
+}
+
+/**
+ * An empty gym. No members, no payments, no attendance, no revenue —
+ * the onboarding wizard, not a seeded dataset, is what fills it.
+ */
+export function blankGym(input: {
+  name: string; email?: string; phone?: string; address?: string;
+  kind?: Gym['kind'];
+}): Gym {
+  const now = new Date().toISOString();
+  const slug = `${slugify(input.name)}-${(Date.now().toString(36) + (++freshSeq)).slice(-5)}`;
+  return {
+    id: `gym_${slug}`,
+    name: input.name.trim(),
+    slug,
+    phone: input.phone?.trim() ?? '',
+    email: input.email?.trim() ?? '',
+    address: input.address?.trim() ?? '',
+    currency: 'INR',
+    timezone: 'Asia/Kolkata',
+    createdAt: now,
+    status: 'active',
+    dataMode: 'live',
+    kind: input.kind ?? 'studio',
+    logoUrl: '',
+    hours: defaultHours(),
+    payment: defaultPaymentSettings(),
+    setup: freshSetup(now),
+  };
+}

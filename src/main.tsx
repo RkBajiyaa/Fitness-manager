@@ -5,6 +5,7 @@ import './styles/base.css';
 import './styles/components.css';
 import './styles/layout.css';
 import './styles/premium.css';
+import './styles/platform.css';
 import App from './App.tsx';
 
 createRoot(document.getElementById('root')!).render(

@@ -16,6 +16,13 @@ const IDENTITY_KEY = 'fm.auth.identity.dev';
 /** Development credentials. Replaced wholesale by Firebase. */
 export const DEMO_CREDENTIALS = [
   {
+    uid: 'demo-admin',
+    email: 'admin@fitnessmanager.demo',
+    password: 'DemoAdmin123!',
+    displayName: 'Platform Admin',
+    role: 'platform_admin' as const,
+  },
+  {
     uid: 'demo-owner',
     email: 'owner@fitnessmanager.demo',
     password: 'DemoOwner123!',

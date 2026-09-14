@@ -9,16 +9,20 @@
    every mutation exercises a real pending state.
    ============================================================ */
 import type {
-  Announcement, AttendanceEvent, BodyMeasurement, DietPlan, Difficulty, Exercise,
+  Announcement, AttendanceEvent, BodyMeasurement, DietItem, DietPlan, Difficulty, Exercise,
   ExerciseKind, ExerciseScope, Expense, ExpenseCategory, FitnessProfile, Gender,
-  Goal, GoalKind, ISODate, Member, Membership, MembershipPlan, MembershipStatus,
-  Message, MessageChannel, MessageKind, Note, Page, Payment, PaymentMethod,
-  Program, ProgramDay, RevenueSource, SessionSet, SetKind, Session,
-  WorkoutSession,
+  Goal, GoalKind, Gym, ISODate, MealSlot, Member, MemberWorkout, Membership, MembershipPlan,
+  MembershipStatus, Message, MessageChannel, MessageKind, Note, OperatingHours, Page, Payment,
+  PaymentMethod, PaymentSettings, Program, ProgramDay, RevenueSource, SessionSet, SetKind,
+  Session, SetupStep, WorkoutSession,
 } from './types';
 import {
-  audit, commit, getDb, memo, newId, NotFound, requireOwner, requireOwnership, tenant,
+  audit, commit, entitlementsFor, featuresFor, getDb, hasFeature, memo, newId, NotFound,
+  requireFeature, requireOwner, requireOwnership, tenant,
 } from './db';
+import * as platformApi from './platform/api';
+import { entitlementList, type Entitlement } from './platform/entitlements';
+import type { FeatureKey } from './platform/catalog';
 import {
   adherence, attendanceStats, checkInDays, currentMembership, dashboardKpis, dailySeries,
   duesFor, engagementFor, goalProgress, groupBy, lastPerformance, latestMeasurement,
@@ -58,16 +62,204 @@ function paginate<T>(rows: T[], page = 1, limit = 25): Page<T> {
 }
 
 const norm = (s: string) => s.toLowerCase().trim();
+
+/** Either channel is enough to open the communication log. */
+function requireCommunication(session: Session): void {
+  if (hasFeature(session, 'whatsapp') || hasFeature(session, 'email')) return;
+  requireFeature(session, 'whatsapp');
+}
 const rupees = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
 /* ============================================================
    Gym
    ============================================================ */
 export const gyms = {
-  current(session: Session) {
+  current(session: Session): Gym {
     const gym = getDb().gyms.find((g) => g.id === session.gymId);
     if (!gym) throw new NotFound('Gym not found.');
     return gym;
+  },
+
+  /** The owner's own profile. Status, package and data mode are NOT editable here. */
+  update(session: Session, patch: {
+    name?: string; phone?: string; email?: string; address?: string;
+    logoUrl?: string; hours?: OperatingHours[];
+  }) {
+    requireOwner(session);
+    const fields: Record<string, string> = {};
+    if (patch.name !== undefined && !patch.name.trim()) fields.name = 'Your gym needs a name.';
+    if (patch.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(patch.email.trim())) {
+      fields.email = 'Enter a valid email address.';
+    }
+    if (Object.keys(fields).length) throw new ValidationError(fields);
+
+    return write(() => {
+      let updated!: Gym;
+      commit((db) => {
+        const gym = db.gyms.find((g) => g.id === session.gymId);
+        if (!gym) throw new NotFound('Gym not found.');
+        if (patch.name !== undefined) gym.name = patch.name.trim();
+        if (patch.phone !== undefined) gym.phone = patch.phone.trim();
+        if (patch.email !== undefined) gym.email = patch.email.trim();
+        if (patch.address !== undefined) gym.address = patch.address.trim();
+        if (patch.logoUrl !== undefined) gym.logoUrl = patch.logoUrl;
+        if (patch.hours) gym.hours = patch.hours;
+        audit(db, session, 'update', 'Gym', gym.id);
+        updated = gym;
+      });
+      return updated;
+    });
+  },
+
+  /**
+   * Payment configuration. Deliberately records intent only —
+   * `gatewayConnected` is never set true here, because nothing in
+   * this build can actually connect one.
+   */
+  updatePayment(session: Session, patch: Partial<PaymentSettings>) {
+    requireOwner(session);
+    requireFeature(session, 'payments');
+    return write(() => {
+      let updated!: PaymentSettings;
+      commit((db) => {
+        const gym = db.gyms.find((g) => g.id === session.gymId);
+        if (!gym) throw new NotFound('Gym not found.');
+        const next: PaymentSettings = { ...gym.payment, ...patch, gatewayConnected: false };
+        if (!next.methods.length) next.methods = ['cash'];
+        gym.payment = next;
+        audit(db, session, 'update', 'PaymentSettings', gym.id);
+        updated = next;
+      });
+      return updated;
+    });
+  },
+};
+
+/* ============================================================
+   Owner onboarding (§M.9)
+
+   Every step is skippable. The checklist keeps the gym honest
+   about what is still empty without blocking the owner out of
+   their own dashboard.
+   ============================================================ */
+export interface SetupProgress {
+  steps: Array<{
+    key: SetupStep;
+    label: string;
+    description: string;
+    state: 'pending' | 'done' | 'skipped';
+    /** Derived from real rows, so a step cannot claim to be done when it is not. */
+    satisfied: boolean;
+  }>;
+  doneCount: number;
+  total: number;
+  complete: boolean;
+  dismissed: boolean;
+}
+
+const SETUP_LABELS: Record<SetupStep, { label: string; description: string }> = {
+  profile: { label: 'Gym information', description: 'Name, contact details and opening hours.' },
+  plans: { label: 'Membership plans', description: 'What you sell, and what it costs.' },
+  payments: { label: 'Payment settings', description: 'How you take money today.' },
+  features: { label: 'Features', description: 'What your plan includes.' },
+  first_member: { label: 'First member', description: 'Add someone and the dashboard comes alive.' },
+};
+
+export const setup = {
+  progress(session: Session): SetupProgress {
+    const gym = gyms.current(session);
+    const db = getDb();
+    const satisfiedBy: Record<SetupStep, boolean> = {
+      profile: Boolean(gym.name && gym.phone && gym.address),
+      plans: db.plans.some((p) => p.gymId === gym.id),
+      payments: gym.payment.methods.length > 0 && gym.payment.gatewayProvider !== undefined,
+      features: true,
+      first_member: db.members.some((m) => m.gymId === gym.id),
+    };
+    const order: SetupStep[] = ['profile', 'plans', 'payments', 'features', 'first_member'];
+    const steps = order.map((key) => ({
+      key,
+      ...SETUP_LABELS[key],
+      state: gym.setup.steps[key],
+      satisfied: satisfiedBy[key],
+    }));
+    const doneCount = steps.filter((x) => x.state === 'done' || x.satisfied).length;
+    return {
+      steps,
+      doneCount,
+      total: order.length,
+      complete: Boolean(gym.setup.completedAt) || steps.every((x) => x.state !== 'pending'),
+      dismissed: gym.setup.dismissed,
+    };
+  },
+
+  mark(session: Session, step: SetupStep, state: 'done' | 'skipped' | 'pending') {
+    requireOwner(session);
+    return write(() => {
+      commit((db) => {
+        const gym = db.gyms.find((g) => g.id === session.gymId);
+        if (!gym) throw new NotFound('Gym not found.');
+        gym.setup.steps[step] = state;
+        const all = Object.values(gym.setup.steps);
+        gym.setup.completedAt = all.every((v) => v !== 'pending')
+          ? (gym.setup.completedAt ?? new Date().toISOString())
+          : null;
+        audit(db, session, 'setup', 'Gym', gym.id, { step, state });
+      });
+    });
+  },
+
+  finish(session: Session, dismissed = true) {
+    requireOwner(session);
+    return write(() => {
+      commit((db) => {
+        const gym = db.gyms.find((g) => g.id === session.gymId);
+        if (!gym) throw new NotFound('Gym not found.');
+        (Object.keys(gym.setup.steps) as SetupStep[]).forEach((k) => {
+          if (gym.setup.steps[k] === 'pending') gym.setup.steps[k] = 'skipped';
+        });
+        gym.setup.completedAt = gym.setup.completedAt ?? new Date().toISOString();
+        gym.setup.dismissed = dismissed;
+        audit(db, session, 'setup_complete', 'Gym', gym.id);
+      });
+    });
+  },
+
+  reopen(session: Session) {
+    requireOwner(session);
+    return write(() => {
+      commit((db) => {
+        const gym = db.gyms.find((g) => g.id === session.gymId);
+        if (!gym) throw new NotFound('Gym not found.');
+        gym.setup.dismissed = false;
+      });
+    });
+  },
+};
+
+/* ============================================================
+   Entitlements, as the gym's own screens see them (§M.3)
+
+   Read-only on this side of the fence. An owner can SEE what
+   their plan includes; only the platform console can change it.
+   ============================================================ */
+export const features = {
+  set(session: Session): Set<FeatureKey> {
+    if (session.gymId) return featuresFor(session.gymId);
+    return new Set();
+  },
+  has(session: Session, key: FeatureKey): boolean {
+    return hasFeature(session, key);
+  },
+  list(session: Session): Entitlement[] {
+    return entitlementList(entitlementsFor(session.gymId));
+  },
+  /** Which package the gym is on, for the owner's read-only feature screen. */
+  plan(session: Session) {
+    const db = getDb();
+    const sub = db.subscriptions.find((x) => x.gymId === session.gymId) ?? null;
+    const pkg = sub ? db.packages.find((p) => p.id === sub.packageId) ?? null : null;
+    return { subscription: sub, pkg };
   },
 };
 
@@ -83,6 +275,7 @@ export const announcements = {
    ============================================================ */
 export const plans = {
   list(session: Session): MembershipPlan[] {
+    requireFeature(session, 'membership_plans');
     return tenant(getDb().plans, session).sort((a, b) => a.durationDays - b.durationDays);
   },
   get(session: Session, id: string): MembershipPlan {
@@ -92,6 +285,7 @@ export const plans = {
   },
   create(session: Session, input: { name: string; durationDays: number; price: number; description?: string }) {
     requireOwner(session);
+    requireFeature(session, 'membership_plans');
     const fields: Record<string, string> = {};
     if (!input.name?.trim()) fields.name = 'Give the plan a name.';
     if (!(input.durationDays > 0)) fields.durationDays = 'Duration must be at least 1 day.';
@@ -110,6 +304,7 @@ export const plans = {
   },
   update(session: Session, id: string, patch: Partial<MembershipPlan>) {
     requireOwner(session);
+    requireFeature(session, 'membership_plans');
     return write(() => {
       let updated!: MembershipPlan;
       commit((db) => {
@@ -187,6 +382,7 @@ export const members = {
   /** Every member row, joined with its engagement score. Cached per revision. */
   rows(session: Session): MemberRow[] {
     requireOwner(session);
+    requireFeature(session, 'member_management');
     return memo(`members.rows:${session.gymId}`, () => {
       const db = getDb();
       const today = todayISO();
@@ -285,6 +481,7 @@ export const members = {
     amountPaid: number; method: PaymentMethod;
   }) {
     requireOwner(session);
+    requireFeature(session, 'member_management');
     const db = getDb();
     validateMember(input, tenant(db.members, session));
 
@@ -311,7 +508,7 @@ export const members = {
           relation: input.emergencyRelation ?? '',
         },
         photoUrl: input.photoUrl ?? '', joinedAt: todayISO(), lifecycle: 'active',
-        fitness: defaultFitness(),
+        fitness: defaultFitness(), onboardedAt: null,
       };
       const membership: Membership = {
         id: newId('msh'), gymId: session.gymId, memberId: member.id, planId: plan.id,
@@ -338,6 +535,7 @@ export const members = {
 
   update(session: Session, id: string, patch: MemberInput) {
     requireOwner(session);
+    requireFeature(session, 'member_management');
     const db = getDb();
     validateMember(patch, tenant(db.members, session), id);
     return write(() => {
@@ -360,6 +558,74 @@ export const members = {
         updated = m;
       });
       return updated;
+    });
+  },
+
+  /**
+   * The member's welcome flow (§M.10). Every field is optional —
+   * a member who skips everything still gets a working app, and
+   * `onboardedAt` records that they have been asked, not that they
+   * answered.
+   */
+  completeOnboarding(session: Session, memberId: string, input: {
+    name?: string; dob?: ISODate; phone?: string; email?: string;
+    heightCm?: number; currentWeightKg?: number; targetWeightKg?: number;
+    goal?: FitnessProfile['goal']; experience?: FitnessProfile['experience'];
+    weeklySessionTarget?: number;
+  }) {
+    requireOwnership(session, memberId);
+    const fields: Record<string, string> = {};
+    if (input.heightCm != null && input.heightCm > 0 && (input.heightCm < 90 || input.heightCm > 250)) {
+      fields.heightCm = 'Enter a height between 90 and 250 cm.';
+    }
+    if (input.currentWeightKg != null && input.currentWeightKg > 0
+      && (input.currentWeightKg < 25 || input.currentWeightKg > 400)) {
+      fields.currentWeightKg = 'That weight looks incorrect.';
+    }
+    if (input.targetWeightKg != null && input.targetWeightKg > 0
+      && (input.targetWeightKg < 25 || input.targetWeightKg > 300)) {
+      fields.targetWeightKg = 'That target looks incorrect.';
+    }
+    if (Object.keys(fields).length) throw new ValidationError(fields);
+
+    return write(() => {
+      commit((db) => {
+        const m = db.members.find((x) => x.id === memberId && x.gymId === session.gymId);
+        if (!m) throw new NotFound('Member not found.');
+        if (input.name?.trim()) m.name = input.name.trim();
+        if (input.dob) m.dob = input.dob;
+        if (input.phone !== undefined) m.phone = input.phone.trim();
+        if (input.email !== undefined) m.email = input.email.trim();
+        if (input.heightCm) m.fitness.heightCm = input.heightCm;
+        if (input.targetWeightKg) m.fitness.targetWeightKg = input.targetWeightKg;
+        if (input.goal) m.fitness.goal = input.goal;
+        if (input.experience) m.fitness.experience = input.experience;
+        if (input.weeklySessionTarget) m.fitness.weeklySessionTarget = input.weeklySessionTarget;
+        m.onboardedAt = new Date().toISOString();
+
+        // The first weigh-in is a real measurement, not a profile field —
+        // that is what makes the weight trend start from day one.
+        if (input.currentWeightKg && input.currentWeightKg > 0) {
+          db.measurements.push({
+            id: newId('bm'), gymId: session.gymId, memberId,
+            takenAt: todayISO(), weightKg: input.currentWeightKg,
+            heightCm: input.heightCm,
+          });
+        }
+        audit(db, session, 'onboard', 'Member', memberId);
+      });
+    });
+  },
+
+  /** Marks the welcome flow as seen without collecting anything. */
+  skipOnboarding(session: Session, memberId: string) {
+    requireOwnership(session, memberId);
+    return write(() => {
+      commit((db) => {
+        const m = db.members.find((x) => x.id === memberId && x.gymId === session.gymId);
+        if (!m) throw new NotFound('Member not found.');
+        m.onboardedAt = new Date().toISOString();
+      });
     });
   },
 
@@ -396,6 +662,7 @@ export const members = {
 
   remove(session: Session, id: string) {
     requireOwner(session);
+    requireFeature(session, 'member_management');
     return write(() => {
       commit((db) => {
         const m = db.members.find((x) => x.id === id && x.gymId === session.gymId);
@@ -412,6 +679,7 @@ export const members = {
         db.messages = db.messages.filter((x) => x.memberId !== id);
         db.programs = db.programs.filter((x) => x.memberId !== id);
         db.dietPlans = db.dietPlans.filter((x) => x.memberId !== id);
+        db.workouts = db.workouts.filter((x) => x.memberId !== id);
         db.exercises = db.exercises.filter((x) => !(x.scope === 'member' && x.ownerId === id));
         // Payments are NOT deleted: the money moved. They are detached instead,
         // so historical revenue and every past report stay reproducible.
@@ -516,6 +784,7 @@ export const memberships = {
 
   list(session: Session, filter: { status?: MembershipStatus | 'all'; days?: number } = {}) {
     requireOwner(session);
+    requireFeature(session, 'memberships');
     const rows = members.rows(session).filter((r) => r.membership !== null);
     if (!filter.status || filter.status === 'all') return rows;
     if (filter.status === 'expiring' && filter.days) {
@@ -529,6 +798,7 @@ export const memberships = {
     amountPaid?: number; method?: PaymentMethod; kind?: 'new' | 'renewal';
   }) {
     requireOwner(session);
+    requireFeature(session, 'memberships');
     const db = getDb();
     const member = tenant(db.members, session).find((m) => m.id === memberId);
     if (!member) throw new NotFound('Member not found.');
@@ -585,6 +855,7 @@ export interface PaymentFilter {
 export const payments = {
   list(session: Session, f: PaymentFilter = {}): Page<Payment & { memberName: string }> {
     requireOwner(session);
+    requireFeature(session, 'payments');
     const db = getDb();
     const names = new Map(tenant(db.members, session).map((m) => [m.id, m.name]));
     let rows = tenant(db.payments, session);
@@ -613,6 +884,7 @@ export const payments = {
 
   outstanding(session: Session) {
     requireOwner(session);
+    requireFeature(session, 'payments');
     const db = getDb();
     return outstanding(tenant(db.members, session), tenant(db.memberships, session), tenant(db.payments, session));
   },
@@ -622,6 +894,7 @@ export const payments = {
     method: PaymentMethod; source?: RevenueSource; note?: string;
   }) {
     requireOwner(session);
+    requireFeature(session, 'payments');
     const db = getDb();
     const fields: Record<string, string> = {};
     if (!(input.amount > 0)) fields.amount = 'Enter an amount greater than zero.';
@@ -676,6 +949,7 @@ export const attendance = {
 
   forMember(session: Session, memberId: string): AttendanceEvent[] {
     requireOwnership(session, memberId);
+    requireFeature(session, 'attendance');
     return tenant(getDb().attendance, session)
       .filter((a) => a.memberId === memberId)
       .sort((a, b) => b.at.localeCompare(a.at));
@@ -707,6 +981,7 @@ export const attendance = {
   },
 
   mark(session: Session, memberId: string, type: 'check_in' | 'check_out') {
+    requireFeature(session, 'attendance');
     const db = getDb();
     const member = tenant(db.members, session).find((m) => m.id === memberId);
     if (!member) throw new NotFound('Member not found.');
@@ -751,6 +1026,7 @@ export const exercises = {
   },
 
   list(session: Session, f: ExerciseFilter = {}): Exercise[] {
+    requireFeature(session, 'exercise_library');
     let rows = exercises.visible(session);
     const q = norm(f.q ?? '');
     if (q) {
@@ -787,6 +1063,7 @@ export const exercises = {
     name: string; muscleGroup: string; equipment: string;
     kind?: ExerciseKind; difficulty?: Difficulty; instructions?: string;
   }) {
+    requireFeature(session, 'exercise_library');
     const fields: Record<string, string> = {};
     if (!input.name?.trim()) fields.name = 'Give the exercise a name.';
     if (!input.muscleGroup?.trim()) fields.muscleGroup = 'Choose a muscle group.';
@@ -847,6 +1124,7 @@ function isGymMember(session: Session, memberId: string | null): boolean {
    ============================================================ */
 export const programs = {
   templates(session: Session): Program[] {
+    requireFeature(session, 'workout_programs');
     return tenant(getDb().programs, session).filter((p) => p.isTemplate);
   },
 
@@ -861,6 +1139,7 @@ export const programs = {
 
   assign(session: Session, memberId: string, templateId: string) {
     requireOwner(session);
+    requireFeature(session, 'workout_programs');
     return write(() => {
       let assigned!: Program;
       commit((db) => {
@@ -939,6 +1218,7 @@ export interface SessionSummary {
 export const sessions = {
   forMember(session: Session, memberId: string, limit?: number): WorkoutSession[] {
     requireOwnership(session, memberId);
+    requireFeature(session, 'workout_logging');
     const rows = tenant(getDb().sessions, session)
       .filter((s) => s.memberId === memberId)
       .sort((a, b) => b.date.localeCompare(a.date) || b.startedAt.localeCompare(a.startedAt));
@@ -969,8 +1249,16 @@ export const sessions = {
       .find((s) => s.memberId === memberId && s.date === date && s.status === 'completed') ?? null;
   },
 
-  start(session: Session, memberId: string, input: { programDayId?: string | null; title?: string } = {}) {
+  /**
+   * Starts from an assigned program day, a member-built workout, or
+   * nothing at all. A session already in progress is returned as-is —
+   * starting twice must never lose the first one.
+   */
+  start(session: Session, memberId: string, input: {
+    programDayId?: string | null; workoutId?: string | null; title?: string;
+  } = {}) {
     requireOwnership(session, memberId);
+    requireFeature(session, 'workout_logging');
     return write(() => {
       let started!: WorkoutSession;
       commit((db) => {
@@ -978,14 +1266,31 @@ export const sessions = {
           (s) => s.memberId === memberId && s.status === 'active' && s.gymId === session.gymId);
         if (existing) { started = existing; return; }
 
-        const program = db.programs.find((p) => p.memberId === memberId && p.gymId === session.gymId);
-        const day = input.programDayId
-          ? program?.days.find((d) => d.id === input.programDayId)
-          : programDayFor(program ?? null, todayISO());
+        const workout = input.workoutId
+          ? db.workouts.find(
+            (w) => w.id === input.workoutId && w.memberId === memberId && w.gymId === session.gymId)
+          : undefined;
+        if (input.workoutId && !workout) throw new NotFound('Workout not found.');
+
+        const program = workout
+          ? undefined
+          : db.programs.find((p) => p.memberId === memberId && p.gymId === session.gymId);
+        const day = workout ? undefined
+          : input.programDayId
+            ? program?.days.find((d) => d.id === input.programDayId)
+            : programDayFor(program ?? null, todayISO());
 
         const sessionId = newId('ses');
         const now = new Date().toISOString();
-        const sets: SessionSet[] = (day?.exercises ?? []).flatMap((pe, order) =>
+        const plan = workout
+          ? workout.exercises.map((e) => ({
+            exerciseId: e.exerciseId, sets: e.sets, reps: e.reps, targetWeightKg: e.targetWeightKg,
+          }))
+          : (day?.exercises ?? []).map((pe) => ({
+            exerciseId: pe.exerciseId, sets: pe.sets, reps: pe.reps, targetWeightKg: pe.targetWeightKg,
+          }));
+
+        const sets: SessionSet[] = plan.flatMap((pe, order) =>
           Array.from({ length: Math.max(1, pe.sets) }, (_, i) => ({
             id: newId('sst'), sessionId, exerciseId: pe.exerciseId, order,
             setNo: i + 1, kind: 'normal' as SetKind,
@@ -994,11 +1299,13 @@ export const sessions = {
             completed: false,
           })));
 
+        if (workout) workout.lastUsedAt = now;
+
         started = {
           id: sessionId, gymId: session.gymId, memberId, date: todayISO(),
           startedAt: now, finishedAt: null,
-          programDayId: day?.id ?? null,
-          title: input.title ?? day?.title ?? 'Training session',
+          programDayId: day?.id ?? null, memberWorkoutId: workout?.id ?? null,
+          title: input.title ?? workout?.name ?? day?.title ?? 'Training session',
           durationSec: 0, notes: '', status: 'active', sets,
         };
         db.sessions.unshift(started);
@@ -1157,14 +1464,17 @@ export const sessions = {
     return write(() => {
       let saved!: WorkoutSession;
       commit((db) => {
-        let row = db.sessions.find(
+        const existing = db.sessions.find(
           (s) => s.memberId === memberId && s.date === input.date
             && s.gymId === session.gymId && s.status === 'completed');
-        if (!row) {
+        let row: WorkoutSession;
+        if (existing) {
+          row = existing;
+        } else {
           const now = new Date().toISOString();
           row = {
             id: newId('ses'), gymId: session.gymId, memberId, date: input.date,
-            startedAt: now, finishedAt: now, programDayId: null,
+            startedAt: now, finishedAt: now, programDayId: null, memberWorkoutId: null,
             title: input.title ?? 'Training session',
             durationSec: (input.durationMin ?? 0) * 60, notes: input.notes ?? '',
             status: 'completed', sets: [],
@@ -1173,9 +1483,9 @@ export const sessions = {
         }
         const baseOrder = row.sets.reduce((m, s) => Math.max(m, s.order), -1) + 1;
         input.sets.forEach((s, i) => {
-          row!.sets.push({
-            id: newId('sst'), sessionId: row!.id, exerciseId: s.exerciseId,
-            order: baseOrder + i, setNo: row!.sets.filter((x) => x.exerciseId === s.exerciseId).length + 1,
+          row.sets.push({
+            id: newId('sst'), sessionId: row.id, exerciseId: s.exerciseId,
+            order: baseOrder + i, setNo: row.sets.filter((x) => x.exerciseId === s.exerciseId).length + 1,
             kind: 'normal', reps: s.reps, weightKg: s.weightKg,
             durationSec: s.durationSec ?? 0, distanceKm: s.distanceKm ?? 0,
             rpe: null, completed: true,
@@ -1202,6 +1512,7 @@ export interface RecordRow extends ExerciseRecord {
 export const records = {
   forMember(session: Session, memberId: string): RecordRow[] {
     requireOwnership(session, memberId);
+    requireFeature(session, 'personal_records');
     return memo(`records:${session.gymId}:${memberId}`, () => {
       const db = getDb();
       const map = recordsByExercise(sessions.completed(session, memberId));
@@ -1268,6 +1579,7 @@ export const streaks = {
 export const measurements = {
   list(session: Session, memberId: string): BodyMeasurement[] {
     requireOwnership(session, memberId);
+    requireFeature(session, 'body_measurements');
     return tenant(getDb().measurements, session)
       .filter((m) => m.memberId === memberId)
       .sort((a, b) => a.takenAt.localeCompare(b.takenAt));
@@ -1278,6 +1590,7 @@ export const measurements = {
   },
   create(session: Session, memberId: string, input: Omit<BodyMeasurement, 'id' | 'gymId' | 'memberId'>) {
     requireOwnership(session, memberId);
+    requireFeature(session, 'body_measurements');
     const fields: Record<string, string> = {};
     if (!(input.weightKg > 0)) fields.weightKg = 'Enter your weight.';
     else if (input.weightKg > 400) fields.weightKg = 'That weight looks incorrect.';
@@ -1309,6 +1622,7 @@ export const measurements = {
 export const water = {
   today(session: Session, memberId: string, date: ISODate = todayISO()): number {
     requireOwnership(session, memberId);
+    requireFeature(session, 'hydration_tracking');
     return waterTotal(tenant(getDb().water, session).filter((w) => w.memberId === memberId), date);
   },
   series(session: Session, memberId: string, from: ISODate, to: ISODate): Point[] {
@@ -1355,6 +1669,7 @@ export const water = {
 export const goals = {
   list(session: Session, memberId: string): Goal[] {
     requireOwnership(session, memberId);
+    requireFeature(session, 'goals');
     return tenant(getDb().goals, session)
       .filter((g) => g.memberId === memberId)
       .sort((a, b) => Number(Boolean(a.achievedAt)) - Number(Boolean(b.achievedAt)));
@@ -1412,29 +1727,223 @@ export const goals = {
 /* ============================================================
    Diet
    ============================================================ */
+export interface DietBundle {
+  assigned: DietPlan | null;
+  personal: DietPlan | null;
+}
+
 export const diet = {
-  planFor(session: Session, memberId: string): DietPlan | null {
+  /**
+   * Both plans, kept apart on purpose. The coach's plan and the
+   * member's own plan are different rows; editing one can never
+   * silently rewrite the other.
+   */
+  forMember(session: Session, memberId: string): DietBundle {
     requireOwnership(session, memberId);
-    return tenant(getDb().dietPlans, session).find((p) => p.memberId === memberId) ?? null;
+    requireFeature(session, 'diet_plans');
+    const rows = tenant(getDb().dietPlans, session).filter((p) => p.memberId === memberId);
+    return {
+      assigned: rows.find((p) => p.source === 'assigned') ?? null,
+      personal: rows.find((p) => p.source === 'personal') ?? null,
+    };
   },
+
+  /** Back-compat: the assigned plan, which is what the old screens asked for. */
+  planFor(session: Session, memberId: string): DietPlan | null {
+    return diet.forMember(session, memberId).assigned;
+  },
+
   templates(session: Session): DietPlan[] {
+    requireFeature(session, 'diet_plans');
     return tenant(getDb().dietPlans, session).filter((p) => p.memberId === null);
   },
+
   assignTemplate(session: Session, memberId: string, templateId: string) {
     requireOwner(session);
+    requireFeature(session, 'diet_plans');
     return write(() => {
       let assigned!: DietPlan;
       commit((db) => {
         const tpl = db.dietPlans.find((p) => p.id === templateId && p.gymId === session.gymId);
         if (!tpl) throw new NotFound('Diet plan not found.');
-        db.dietPlans = db.dietPlans.filter((p) => p.memberId !== memberId);
-        assigned = { ...tpl, id: newId('dpl'), memberId };
+        // Only the ASSIGNED slot is replaced. A member's personal plan survives.
+        db.dietPlans = db.dietPlans.filter(
+          (p) => !(p.memberId === memberId && p.source === 'assigned'));
+        assigned = {
+          ...tpl, id: newId('dpl'), memberId, source: 'assigned',
+          updatedAt: new Date().toISOString(),
+          items: tpl.items.map((i) => ({ ...i, id: newId('ditm') })),
+        };
         db.dietPlans.push(assigned);
         audit(db, session, 'assign', 'DietPlan', assigned.id, { memberId });
       });
       return assigned;
     });
   },
+
+  unassign(session: Session, memberId: string) {
+    requireOwner(session);
+    requireFeature(session, 'diet_plans');
+    return write(() => {
+      commit((db) => {
+        db.dietPlans = db.dietPlans.filter(
+          (p) => !(p.memberId === memberId && p.source === 'assigned' && p.gymId === session.gymId));
+        audit(db, session, 'unassign', 'DietPlan', memberId);
+      });
+    });
+  },
+
+  /* ---------------- the member's own plan ---------------- */
+
+  /** Creates the personal plan if it does not exist yet. */
+  ensurePersonal(session: Session, memberId: string, name = 'My diet') {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'diet_plans');
+    return write(() => {
+      let plan!: DietPlan;
+      commit((db) => {
+        const existing = db.dietPlans.find(
+          (p) => p.memberId === memberId && p.source === 'personal' && p.gymId === session.gymId);
+        if (existing) { plan = existing; return; }
+        plan = {
+          id: newId('dpl'), gymId: session.gymId, memberId, name: name.trim() || 'My diet',
+          waterTargetL: 2.5, source: 'personal', notes: '',
+          updatedAt: new Date().toISOString(), items: [],
+        };
+        db.dietPlans.push(plan);
+        audit(db, session, 'create', 'DietPlan', plan.id, { memberId, source: 'personal' });
+      });
+      return plan;
+    });
+  },
+
+  updatePersonal(session: Session, memberId: string, patch: { name?: string; notes?: string }) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'diet_plans');
+    return write(() => {
+      commit((db) => {
+        const plan = personalPlan(db.dietPlans, session, memberId);
+        if (patch.name !== undefined) plan.name = patch.name.trim() || plan.name;
+        if (patch.notes !== undefined) plan.notes = patch.notes;
+        plan.updatedAt = new Date().toISOString();
+      });
+    });
+  },
+
+  addItem(session: Session, memberId: string, input: {
+    meal: MealSlot; item: string; qty?: string;
+    calories?: number; protein?: number; carbs?: number; fat?: number;
+  }) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'diet_plans');
+    const fields: Record<string, string> = {};
+    if (!input.item?.trim()) fields.item = 'What are you eating?';
+    if (input.calories != null && input.calories < 0) fields.calories = 'Calories cannot be negative.';
+    if (Object.keys(fields).length) throw new ValidationError(fields);
+
+    return write(() => {
+      let created!: DietItem;
+      commit((db) => {
+        const plan = personalPlan(db.dietPlans, session, memberId);
+        const order = plan.items.filter((i) => i.meal === input.meal).length;
+        created = {
+          id: newId('ditm'), meal: input.meal, order,
+          item: input.item.trim(), qty: input.qty?.trim() ?? '',
+          calories: Math.max(0, Math.round(input.calories ?? 0)),
+          protein: Math.max(0, Math.round(input.protein ?? 0)),
+          carbs: Math.max(0, Math.round(input.carbs ?? 0)),
+          fat: Math.max(0, Math.round(input.fat ?? 0)),
+        };
+        plan.items.push(created);
+        plan.updatedAt = new Date().toISOString();
+      });
+      return created;
+    });
+  },
+
+  updateItem(session: Session, memberId: string, itemId: string, patch: Partial<Omit<DietItem, 'id'>>) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'diet_plans');
+    return write(() => {
+      commit((db) => {
+        const plan = personalPlan(db.dietPlans, session, memberId);
+        const item = plan.items.find((i) => i.id === itemId);
+        if (!item) throw new NotFound('That item is not in your plan.');
+        Object.assign(item, {
+          item: patch.item?.trim() ?? item.item,
+          qty: patch.qty ?? item.qty,
+          meal: patch.meal ?? item.meal,
+          calories: patch.calories != null ? Math.max(0, Math.round(patch.calories)) : item.calories,
+          protein: patch.protein != null ? Math.max(0, Math.round(patch.protein)) : item.protein,
+          carbs: patch.carbs != null ? Math.max(0, Math.round(patch.carbs)) : item.carbs,
+          fat: patch.fat != null ? Math.max(0, Math.round(patch.fat)) : item.fat,
+        });
+        plan.updatedAt = new Date().toISOString();
+      });
+    });
+  },
+
+  removeItem(session: Session, memberId: string, itemId: string) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'diet_plans');
+    return write(() => {
+      commit((db) => {
+        const plan = personalPlan(db.dietPlans, session, memberId);
+        plan.items = plan.items.filter((i) => i.id !== itemId);
+        plan.updatedAt = new Date().toISOString();
+        db.mealCompletions = db.mealCompletions.filter((c) => c.dietItemId !== itemId);
+      });
+    });
+  },
+
+  /** Move an item up or down inside its meal. */
+  moveItem(session: Session, memberId: string, itemId: string, direction: -1 | 1) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'diet_plans');
+    return write(() => {
+      commit((db) => {
+        const plan = personalPlan(db.dietPlans, session, memberId);
+        const item = plan.items.find((i) => i.id === itemId);
+        if (!item) throw new NotFound('That item is not in your plan.');
+        const siblings = plan.items
+          .filter((i) => i.meal === item.meal)
+          .sort((a, b) => a.order - b.order);
+        const idx = siblings.findIndex((i) => i.id === itemId);
+        const target = idx + direction;
+        if (target < 0 || target >= siblings.length) return;
+        const swap = siblings[target];
+        const tmp = item.order;
+        item.order = swap.order;
+        swap.order = tmp;
+        plan.updatedAt = new Date().toISOString();
+      });
+    });
+  },
+
+  /** Copies the coach's plan into the member's own so they can adapt it. */
+  copyAssignedToPersonal(session: Session, memberId: string) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'diet_plans');
+    return write(() => {
+      let plan!: DietPlan;
+      commit((db) => {
+        const assigned = db.dietPlans.find(
+          (p) => p.memberId === memberId && p.source === 'assigned' && p.gymId === session.gymId);
+        if (!assigned) throw new NotFound('You have no assigned plan to copy.');
+        db.dietPlans = db.dietPlans.filter(
+          (p) => !(p.memberId === memberId && p.source === 'personal' && p.gymId === session.gymId));
+        plan = {
+          ...assigned, id: newId('dpl'), source: 'personal',
+          name: `${assigned.name} (my copy)`, updatedAt: new Date().toISOString(),
+          items: assigned.items.map((i) => ({ ...i, id: newId('ditm') })),
+        };
+        db.dietPlans.push(plan);
+        audit(db, session, 'copy', 'DietPlan', plan.id, { memberId });
+      });
+      return plan;
+    });
+  },
+
   /** Meal ticking is stored, so "today's intake" is real data. */
   completions(session: Session, memberId: string, date: ISODate = todayISO()): Set<string> {
     requireOwnership(session, memberId);
@@ -1443,8 +1952,10 @@ export const diet = {
         .filter((c) => c.memberId === memberId && c.date === date)
         .map((c) => c.dietItemId));
   },
+
   toggleMeal(session: Session, memberId: string, dietItemId: string, date: ISODate = todayISO()) {
     requireOwnership(session, memberId);
+    requireFeature(session, 'diet_plans');
     return write(() => {
       let done = false;
       commit((db) => {
@@ -1464,6 +1975,140 @@ export const diet = {
   },
 };
 
+function personalPlan(rows: DietPlan[], session: Session, memberId: string): DietPlan {
+  const plan = rows.find(
+    (p) => p.memberId === memberId && p.source === 'personal' && p.gymId === session.gymId);
+  if (!plan) throw new NotFound('You have not created a diet plan yet.');
+  return plan;
+}
+
+/* ============================================================
+   Member-built workouts (§M.7)
+
+   Separate from Program by design: a member saving "my chest day"
+   must never touch what their coach prescribed. Different table,
+   different owner, no overlap.
+   ============================================================ */
+export interface WorkoutInput {
+  name: string;
+  focus?: string;
+  notes?: string;
+  exercises: Array<{
+    exerciseId: string; sets: number; reps: number;
+    targetWeightKg?: number; restSec?: number; notes?: string;
+  }>;
+}
+
+export const workouts = {
+  list(session: Session, memberId: string): MemberWorkout[] {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'workout_builder');
+    return tenant(getDb().workouts, session)
+      .filter((w) => w.memberId === memberId)
+      .sort((a, b) => (b.lastUsedAt ?? b.updatedAt).localeCompare(a.lastUsedAt ?? a.updatedAt));
+  },
+
+  get(session: Session, memberId: string, id: string): MemberWorkout {
+    const row = workouts.list(session, memberId).find((w) => w.id === id);
+    if (!row) throw new NotFound('Workout not found.');
+    return row;
+  },
+
+  create(session: Session, memberId: string, input: WorkoutInput) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'workout_builder');
+    validateWorkout(input);
+    return write(() => {
+      let created!: MemberWorkout;
+      commit((db) => {
+        const now = new Date().toISOString();
+        created = {
+          id: newId('mwo'), gymId: session.gymId, memberId,
+          name: input.name.trim(), focus: input.focus?.trim() ?? '',
+          notes: input.notes?.trim() ?? '',
+          createdAt: now, updatedAt: now, lastUsedAt: null,
+          exercises: normaliseWorkoutExercises(input.exercises),
+        };
+        db.workouts.push(created);
+        audit(db, session, 'create', 'MemberWorkout', created.id, { memberId });
+      });
+      return created;
+    });
+  },
+
+  update(session: Session, memberId: string, id: string, input: WorkoutInput) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'workout_builder');
+    validateWorkout(input);
+    return write(() => {
+      let updated!: MemberWorkout;
+      commit((db) => {
+        const row = db.workouts.find(
+          (w) => w.id === id && w.memberId === memberId && w.gymId === session.gymId);
+        if (!row) throw new NotFound('Workout not found.');
+        row.name = input.name.trim();
+        row.focus = input.focus?.trim() ?? '';
+        row.notes = input.notes?.trim() ?? '';
+        row.exercises = normaliseWorkoutExercises(input.exercises);
+        row.updatedAt = new Date().toISOString();
+        audit(db, session, 'update', 'MemberWorkout', row.id, { memberId });
+        updated = row;
+      });
+      return updated;
+    });
+  },
+
+  remove(session: Session, memberId: string, id: string) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'workout_builder');
+    return write(() => {
+      commit((db) => {
+        const row = db.workouts.find(
+          (w) => w.id === id && w.memberId === memberId && w.gymId === session.gymId);
+        if (!row) throw new NotFound('Workout not found.');
+        db.workouts = db.workouts.filter((w) => w.id !== id);
+        audit(db, session, 'delete', 'MemberWorkout', id, { memberId });
+      });
+    });
+  },
+
+  duplicate(session: Session, memberId: string, id: string) {
+    const source = workouts.get(session, memberId, id);
+    return workouts.create(session, memberId, {
+      name: `${source.name} (copy)`,
+      focus: source.focus,
+      notes: source.notes,
+      exercises: source.exercises.map((e) => ({
+        exerciseId: e.exerciseId, sets: e.sets, reps: e.reps,
+        targetWeightKg: e.targetWeightKg, restSec: e.restSec, notes: e.notes,
+      })),
+    });
+  },
+};
+
+function validateWorkout(input: WorkoutInput): void {
+  const fields: Record<string, string> = {};
+  if (!input.name?.trim()) fields.name = 'Give the workout a name.';
+  if (!input.exercises?.length) fields.exercises = 'Add at least one exercise.';
+  if (input.exercises?.some((e) => e.sets < 1 || e.sets > 20)) {
+    fields.exercises = 'Sets must be between 1 and 20.';
+  }
+  if (input.exercises?.some((e) => e.reps < 1 || e.reps > 100)) {
+    fields.exercises = 'Reps must be between 1 and 100.';
+  }
+  if (Object.keys(fields).length) throw new ValidationError(fields);
+}
+
+function normaliseWorkoutExercises(rows: WorkoutInput['exercises']) {
+  return rows.map((e, i) => ({
+    id: newId('mwe'), exerciseId: e.exerciseId, order: i,
+    sets: Math.round(e.sets), reps: Math.round(e.reps),
+    targetWeightKg: Math.max(0, e.targetWeightKg ?? 0),
+    restSec: Math.max(0, Math.round(e.restSec ?? 90)),
+    notes: e.notes?.trim() ?? '',
+  }));
+}
+
 /* ============================================================
    Communication (§J)
    ============================================================ */
@@ -1482,6 +2127,7 @@ export const messages = {
   /** Builds the message body from a template plus this member's real data. */
   preview(session: Session, memberId: string, kind: MessageKind) {
     requireOwner(session);
+    requireCommunication(session);
     const summary = members.get(session, memberId);
     const gym = gyms.current(session);
     const lastPayment = payments.forMember(session, memberId)[0] ?? null;
@@ -1503,6 +2149,7 @@ export const messages = {
     subject: string; body: string;
   }) {
     requireOwner(session);
+    requireFeature(session, input.channel === 'email' ? 'email' : 'whatsapp');
     const fields: Record<string, string> = {};
     if (!input.body?.trim()) fields.body = 'The message is empty.';
     if (Object.keys(fields).length) throw new ValidationError(fields);
@@ -1537,6 +2184,7 @@ export interface ExpenseFilter {
 export const expenses = {
   list(session: Session, f: ExpenseFilter = {}): Page<Expense> {
     requireOwner(session);
+    requireFeature(session, 'expenses');
     let rows = tenant(getDb().expenses, session);
     if (f.from) rows = rows.filter((e) => e.spentAt >= f.from!);
     if (f.to) rows = rows.filter((e) => e.spentAt <= f.to!);
@@ -1553,6 +2201,7 @@ export const expenses = {
     description: string; vendor?: string; method: PaymentMethod; isRecurring?: boolean;
   }) {
     requireOwner(session);
+    requireFeature(session, 'expenses');
     const fields: Record<string, string> = {};
     if (!(input.amount > 0)) fields.amount = 'Enter an amount greater than zero.';
     if (!input.spentAt) fields.spentAt = 'Choose a date.';
@@ -1670,16 +2319,19 @@ export const dashboard = {
 export const reports = {
   revenueByMonth(session: Session, from: ISODate, to: ISODate) {
     requireOwner(session);
+    requireFeature(session, 'reports');
     return monthlySeries(from, to,
       tenant(getDb().payments, session).map((p) => ({ date: dayOf(p.paidAt), value: p.amount })));
   },
   expenseByMonth(session: Session, from: ISODate, to: ISODate) {
     requireOwner(session);
+    requireFeature(session, 'reports');
     return monthlySeries(from, to,
       tenant(getDb().expenses, session).map((e) => ({ date: e.spentAt, value: e.amount })));
   },
   totals(session: Session, from: ISODate, to: ISODate) {
     requireOwner(session);
+    requireFeature(session, 'reports');
     const db = getDb();
     const pays = tenant(db.payments, session).filter((p) => dayOf(p.paidAt) >= from && dayOf(p.paidAt) <= to);
     const exps = tenant(db.expenses, session).filter((e) => e.spentAt >= from && e.spentAt <= to);
@@ -1697,6 +2349,13 @@ export const reports = {
     };
   },
 };
+
+/* ============================================================
+   The platform console's seam, re-exported so every screen still
+   imports from exactly one module.
+   ============================================================ */
+export const platform = platformApi;
+export { PlatformValidationError } from './platform/api';
 
 /* Re-exported so screens import derivations from one place. */
 export { membershipStatus, membershipNet, duesFor, summarise, adherence };

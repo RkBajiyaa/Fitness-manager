@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Avatar, Button, Card, CardBody, CardHead, EmptyState, PageHead, StatTile, StatusBadge,
 } from '../../components/ui/primitives';
@@ -18,8 +18,17 @@ import type { MemberRow } from '../../lib/api';
 import { count, dateLong, dayLabel, money, moneyCompact, monthLabel, pct } from '../../lib/format';
 import { addDays, addMonths, monthKey, todayISO } from '../../lib/date';
 
+/**
+ * Reads that cross module boundaries. A gym can legitimately have
+ * Expenses or Payments switched off, and the dashboard should degrade
+ * to the sections they do have rather than blow up.
+ */
+function safe<T>(fn: () => T, fallback: T): T {
+  try { return fn(); } catch { return fallback; }
+}
+
 export default function Dashboard() {
-  const { session } = useApp();
+  const { session, has } = useApp();
   const nav = useNavigate();
   const [dialog, setDialog] = useState<'payment' | 'expense' | 'attendance' | null>(null);
   const [renew, setRenew] = useState<string | null>(null);
@@ -28,19 +37,21 @@ export default function Dashboard() {
 
   const today = todayISO();
 
-  const k = useData(() => (session ? api.dashboard.get(session) : null), [session?.gymId]);
-  const queue = useData(() => (session ? api.engagement.queue(session) : []), [session?.gymId]);
-  const highlights = useData(() => (session ? api.engagement.highlights(session, 4) : []), [session?.gymId]);
-  const counts = useData(() => (session ? api.members.counts(session) : null), [session?.gymId]);
-  const revenue = useData(() => (session ? api.dashboard.revenueTrend(session, 6) : []), [session?.gymId]);
-  const spend = useData(() => (session ? api.dashboard.expenseTrend(session, 6) : []), [session?.gymId]);
+  const k = useData(() => (session ? safe(() => api.dashboard.get(session), null) : null), [session?.gymId]);
+  const queue = useData(() => (session ? safe(() => api.engagement.queue(session), []) : []), [session?.gymId]);
+  const highlights = useData(() => (session ? safe(() => api.engagement.highlights(session, 4), []) : []), [session?.gymId]);
+  const counts = useData(() => (session ? safe(() => api.members.counts(session), null) : null), [session?.gymId]);
+  const revenue = useData(() => (session ? safe(() => api.dashboard.revenueTrend(session, 6), []) : []), [session?.gymId]);
+  const spend = useData(() => (session ? safe(() => api.dashboard.expenseTrend(session, 6), []) : []), [session?.gymId]);
   const sessionTrend = useData(
-    () => (session ? api.dashboard.sessionTrend(session, addDays(today, -29), today) : []),
+    () => (session ? safe(() => api.dashboard.sessionTrend(session, addDays(today, -29), today), []) : []),
     [session?.gymId],
   );
-  const growth = useData(() => (session ? api.dashboard.memberGrowth(session, 6) : []), [session?.gymId]);
-  const expiring = useData(() => (session ? api.dashboard.expiring(session, 14) : []), [session?.gymId]);
-  const dues = useData(() => (session ? api.payments.outstanding(session) : []), [session?.gymId]);
+  const growth = useData(() => (session ? safe(() => api.dashboard.memberGrowth(session, 6), []) : []), [session?.gymId]);
+  const expiring = useData(() => (session ? safe(() => api.dashboard.expiring(session, 14), []) : []), [session?.gymId]);
+  const setup = useData(() => (session ? safe(() => api.setup.progress(session), null) : null), [session?.gymId]);
+  const gym = useData(() => (session ? safe(() => api.gyms.current(session), null) : null), [session?.gymId]);
+  const dues = useData(() => (session ? safe(() => api.payments.outstanding(session), []) : []), [session?.gymId]);
 
   if (!session || !k || !counts) return null;
 
@@ -64,23 +75,59 @@ export default function Dashboard() {
         subtitle={dateLong(today)}
         actions={
           <>
-            <Button icon="calendarCheck" onClick={() => setDialog('attendance')}>
-              <span className="hide-mobile">Mark attendance</span>
-              <span className="only-mobile">Attendance</span>
-            </Button>
-            <Button icon="receipt" onClick={() => setDialog('expense')}>
-              <span className="hide-mobile">Add expense</span>
-              <span className="only-mobile">Expense</span>
-            </Button>
-            <Button variant="primary" icon="wallet" onClick={() => setDialog('payment')}>
-              <span className="hide-mobile">Record payment</span>
-              <span className="only-mobile">Payment</span>
-            </Button>
+            {has('attendance') && counts.all > 0 && (
+              <Button icon="calendarCheck" onClick={() => setDialog('attendance')}>
+                <span className="hide-mobile">Mark attendance</span>
+                <span className="only-mobile">Attendance</span>
+              </Button>
+            )}
+            {has('expenses') && (
+              <Button icon="receipt" onClick={() => setDialog('expense')}>
+                <span className="hide-mobile">Add expense</span>
+                <span className="only-mobile">Expense</span>
+              </Button>
+            )}
+            {has('payments') && counts.all > 0 && (
+              <Button variant="primary" icon="wallet" onClick={() => setDialog('payment')}>
+                <span className="hide-mobile">Record payment</span>
+                <span className="only-mobile">Payment</span>
+              </Button>
+            )}
           </>
         }
       />
 
+      {/*
+        A brand-new gym does not get thirty empty charts. It gets a
+        checklist with real buttons — "no data" is a fact, not a screen.
+      */}
+      {counts.all === 0 && setup && (
+        <FreshGym setup={setup} demo={gym?.dataMode === 'demo'} />
+      )}
+
+      {counts.all > 0 && !setup?.complete && setup && (
+        <Card className="u-mb-5">
+          <CardBody>
+            <div className="u-between u-gap-4 u-wrap">
+              <div>
+                <div className="t-sm" style={{ fontWeight: 580 }}>
+                  Finish setting up · {setup.doneCount} of {setup.total} done
+                </div>
+                <p className="t-xs t-muted u-mt-2">
+                  {setup.steps.filter((x) => x.state !== 'done' && !x.satisfied)
+                    .map((x) => x.label).join(' · ') || 'Almost there.'}
+                </p>
+              </div>
+              <Button variant="primary" icon="route" onClick={() => nav('/owner/setup')}>
+                Continue setup
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
       {/* ================= THE QUEUE THAT MATTERS AT 50 MEMBERS ================= */}
+      {counts.all > 0 && (
       <Card className="u-mb-5">
         <CardHead
           title="Needs attention"
@@ -97,6 +144,7 @@ export default function Dashboard() {
           <AttentionQueue rows={queue} limit={4} onAct={act} />
         </CardBody>
       </Card>
+      )}
 
       {/* ================= TODAY ================= */}
       <h2 className="t-label u-mb-3">Today</h2>
@@ -109,10 +157,14 @@ export default function Dashboard() {
           value={k.insideNow == null ? '—' : count(k.insideNow)}
           hint={k.insideNow == null ? 'no check-out data yet' : 'not yet checked out'}
           onClick={() => nav('/owner/attendance')} />
-        <StatTile label="Revenue" icon="wallet" value={money(k.revenueToday)}
-          hint="received today" onClick={() => nav('/owner/payments')} />
-        <StatTile label="Expenses" icon="receipt" value={money(k.expensesToday)}
-          hint="spent today" onClick={() => nav('/owner/expenses')} />
+        {has('payments') && (
+          <StatTile label="Revenue" icon="wallet" value={money(k.revenueToday)}
+            hint="received today" onClick={() => nav('/owner/payments')} />
+        )}
+        {has('expenses') && (
+          <StatTile label="Expenses" icon="receipt" value={money(k.expensesToday)}
+            hint="spent today" onClick={() => nav('/owner/expenses')} />
+        )}
         <StatTile label="New / renewals" icon="userPlus" value={`${k.newToday} / ${k.renewalsToday}`}
           hint="signed today" onClick={() => nav('/owner/memberships')} />
       </div>
@@ -138,23 +190,26 @@ export default function Dashboard() {
           <CardBody flush>
             <ul className="cardlist">
               {highlights.map((h, i) => (
-                <li key={`${h.memberId}-${i}`}>
-                  <button className="cardlist__item" onClick={() => nav(`/owner/members/${h.memberId}`)}>
-                    <span style={{
-                      width: 32, height: 32, flex: 'none', display: 'grid', placeItems: 'center',
-                      borderRadius: 'var(--r-md)', background: 'var(--accent-soft)', color: 'var(--accent)',
-                    }}>
-                      <Icon name={h.kind === 'pr' ? 'trophy' : 'flame'} size={16} />
-                    </span>
-                    <span className="u-grow" style={{ minWidth: 0 }}>
-                      <span className="t-sm" style={{ fontWeight: 580 }}>{h.memberName}</span>
-                      <span className="t-xs t-muted" style={{ display: 'block' }}>{h.text}</span>
-                    </span>
-                    <Button size="sm" icon="message"
-                      onClick={(e) => { e.stopPropagation(); setMessage(h.memberId); }}>
+                /* Stretched link, not a button inside a button — see AttentionQueue. */
+                <li key={`${h.memberId}-${i}`} className="cardlist__item cardlist__item--static">
+                  <span style={{
+                    width: 32, height: 32, flex: 'none', display: 'grid', placeItems: 'center',
+                    borderRadius: 'var(--r-md)', background: 'var(--accent-soft)', color: 'var(--accent)',
+                  }}>
+                    <Icon name={h.kind === 'pr' ? 'trophy' : 'flame'} size={16} />
+                  </span>
+                  <span className="u-grow" style={{ minWidth: 0 }}>
+                    <Link className="t-sm attnrow__link" style={{ fontWeight: 580 }}
+                      to={`/owner/members/${h.memberId}`}>
+                      {h.memberName}
+                    </Link>
+                    <span className="t-xs t-muted" style={{ display: 'block' }}>{h.text}</span>
+                  </span>
+                  <span className="attnrow__actions">
+                    <Button size="sm" icon="message" onClick={() => setMessage(h.memberId)}>
                       Congratulate
                     </Button>
-                  </button>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -163,6 +218,7 @@ export default function Dashboard() {
       )}
 
       {/* ================= THE MONTH, AS ONE NUMBER ================= */}
+      {has('revenue') && (
       <Card className="u-mb-5">
         <div className="card__body">
           <div className="grid-3" style={{ alignItems: 'center' }}>
@@ -217,9 +273,11 @@ export default function Dashboard() {
           </div>
         </div>
       </Card>
+      )}
 
       {/* ================= CHARTS ================= */}
       <div className="grid-2 u-mb-5">
+        {has('revenue') && has('expenses') && (
         <Card>
           <CardBody>
             <ChartFrame
@@ -237,7 +295,9 @@ export default function Dashboard() {
             </ChartFrame>
           </CardBody>
         </Card>
+        )}
 
+        {has('revenue') && has('expenses') && (
         <Card>
           <CardBody>
             <ChartFrame title="Operating profit" subtitle="Revenue minus expenses, by month">
@@ -246,6 +306,8 @@ export default function Dashboard() {
             </ChartFrame>
           </CardBody>
         </Card>
+        )}
+
 
         <Card>
           <CardBody>
@@ -270,6 +332,7 @@ export default function Dashboard() {
 
       {/* ================= WORK QUEUES ================= */}
       <div className="grid-2">
+        {has('memberships') && (
         <Card>
           <CardHead
             title="Renewals due"
@@ -300,7 +363,9 @@ export default function Dashboard() {
             )}
           </CardBody>
         </Card>
+        )}
 
+        {has('payments') && (
         <Card>
           <CardHead
             title="Outstanding payments"
@@ -335,6 +400,7 @@ export default function Dashboard() {
             )}
           </CardBody>
         </Card>
+        )}
       </div>
 
       {dialog === 'payment' && <RecordPaymentDialog onClose={() => setDialog(null)} />}
@@ -344,6 +410,81 @@ export default function Dashboard() {
       {pay && <RecordPaymentDialog memberId={pay} onClose={() => setPay(null)} />}
       {message && <MessageDialog memberId={message} initialKind="congratulations" onClose={() => setMessage(null)} />}
     </div>
+  );
+}
+
+/* ============================================================
+   The empty gym, done properly (§M.9)
+
+   Not "No data" thirty times over. One panel that says what is
+   missing and gives the button that fixes it — the same checklist
+   the setup wizard walks through, available forever.
+   ============================================================ */
+function FreshGym({ setup, demo }: {
+  setup: NonNullable<ReturnType<typeof api.setup.progress>>;
+  demo?: boolean;
+}) {
+  const nav = useNavigate();
+  const { has } = useApp();
+
+  const ACTIONS: Partial<Record<string, { label: string; to: string; feature?: string }>> = {
+    profile: { label: 'Add gym details', to: '/owner/settings' },
+    plans: { label: 'Create a plan', to: '/owner/plans', feature: 'membership_plans' },
+    payments: { label: 'Payment settings', to: '/owner/settings', feature: 'payments' },
+    features: { label: 'See my features', to: '/owner/features' },
+    first_member: { label: 'Add first member', to: '/owner/members/new', feature: 'member_management' },
+  };
+
+  return (
+    <Card className="u-mb-5">
+      <CardBody>
+        <div className="u-row u-gap-4" style={{ alignItems: 'flex-start' }}>
+          <span style={{
+            width: 44, height: 44, flex: 'none', display: 'grid', placeItems: 'center',
+            borderRadius: 'var(--r-lg)', background: 'var(--brand)', color: 'var(--brand-ink)',
+          }}>
+            <Icon name="sparkles" size={20} />
+          </span>
+          <div className="u-grow" style={{ minWidth: 0 }}>
+            <h2 className="t-h2">Your gym is ready to fill in</h2>
+            <p className="t-sm t-muted u-mt-2" style={{ maxWidth: '60ch' }}>
+              {demo
+                ? 'This is a demonstration workspace.'
+                : 'Nothing here was generated for you — every number on this dashboard will be something you actually did. Start wherever makes sense.'}
+            </p>
+          </div>
+          <Button variant="primary" icon="route" onClick={() => nav('/owner/setup')}>
+            <span className="hide-mobile">Guided setup</span>
+            <span className="only-mobile">Setup</span>
+          </Button>
+        </div>
+
+        <ul className="checklist u-mt-5">
+          {setup.steps.map((step) => {
+            const action = ACTIONS[step.key];
+            const blocked = Boolean(action?.feature && !has(action.feature as never));
+            const complete = step.satisfied || step.state === 'done';
+            return (
+              <li key={step.key} className={`checklist__item ${complete ? 'checklist__item--done' : ''}`}>
+                <span className="checklist__mark">
+                  {complete ? <Icon name="check" size={13} strokeWidth={2.8} /> : null}
+                </span>
+                <span className="u-grow" style={{ minWidth: 0 }}>
+                  <span className="t-sm" style={{ fontWeight: 555 }}>{step.label}</span>
+                  <span className="t-xs t-faint" style={{ display: 'block', marginTop: 2 }}>
+                    {complete ? 'Done' : step.state === 'skipped' ? 'Skipped — still available' : step.description}
+                  </span>
+                </span>
+                {!complete && action && !blocked && (
+                  <Button size="sm" onClick={() => nav(action.to)}>{action.label}</Button>
+                )}
+                {blocked && <span className="tag tag--quiet">Not in your plan</span>}
+              </li>
+            );
+          })}
+        </ul>
+      </CardBody>
+    </Card>
   );
 }
 

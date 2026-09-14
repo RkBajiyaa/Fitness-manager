@@ -4,11 +4,70 @@
    Every gym-owned row carries gymId — the tenant key.
    ============================================================ */
 
-export type Role = 'platform_admin' | 'owner' | 'trainer' | 'member';
+/**
+ * All six roles exist in the model from day one — see
+ * lib/platform/permissions.ts for what each may do. Only
+ * platform_admin, owner and member are exposed as sign-in
+ * destinations in this build; the rest are routing work, not a
+ * security redesign.
+ */
+export type Role = 'platform_admin' | 'owner' | 'manager' | 'trainer' | 'reception' | 'member';
 
 export type ISODate = string;      // 'YYYY-MM-DD'
 export type ISODateTime = string;  // full ISO 8601
 
+/** How a gym's weekly hours are stored. Index 0 = Sunday. */
+export interface OperatingHours {
+  /** 'HH:MM' local. */
+  open: string;
+  close: string;
+  closed: boolean;
+}
+
+export type GatewayProvider = 'none' | 'razorpay' | 'stripe' | 'payu' | 'other';
+
+/**
+ * Configuration only. NOTHING here connects to a real gateway in
+ * this build — `gatewayProvider` records an intention so the
+ * migration has somewhere to land, and the UI says so plainly.
+ */
+export interface PaymentSettings {
+  methods: PaymentMethod[];
+  upiId: string;
+  bankAccountName: string;
+  bankAccountNumber: string;
+  bankIfsc: string;
+  gatewayProvider: GatewayProvider;
+  /** Always false here. A future phase is the only thing that flips it. */
+  gatewayConnected: boolean;
+  invoicePrefix: string;
+  taxNote: string;
+}
+
+export type SetupStep = 'profile' | 'plans' | 'payments' | 'features' | 'first_member';
+export type SetupStepState = 'pending' | 'done' | 'skipped';
+
+/** Owner onboarding progress. Every step is skippable by design. */
+export interface GymSetup {
+  steps: Record<SetupStep, SetupStepState>;
+  startedAt: ISODateTime;
+  completedAt: ISODateTime | null;
+  /** The owner closed the checklist; it stops nagging but stays in Settings. */
+  dismissed: boolean;
+}
+
+export type GymStatus = 'active' | 'suspended';
+
+/**
+ * `dataMode` is the production/demo firewall. A demo workspace is
+ * a tenant like any other — the isolation that keeps it away from
+ * live data is the same tenant gate that keeps two gyms apart, not
+ * a second mechanism that could disagree with the first.
+ *
+ * `kind: 'personal'` is a single member training on their own, with
+ * no business side. It keeps the invariant that every row has a
+ * gymId without inventing fake employer data for them.
+ */
 export interface Gym {
   id: string;
   name: string;
@@ -19,6 +78,13 @@ export interface Gym {
   currency: 'INR';
   timezone: string;
   createdAt: ISODateTime;
+  status: GymStatus;
+  dataMode: 'live' | 'demo';
+  kind: 'studio' | 'personal';
+  logoUrl: string;
+  hours: OperatingHours[];          // 7 entries, index 0 = Sunday
+  payment: PaymentSettings;
+  setup: GymSetup;
 }
 
 /** Identity is separate from the domain user — see §I.2. */
@@ -67,6 +133,8 @@ export interface Member {
   lifecycle: MemberLifecycle;    // NOT membership status — that is derived
   trainerId?: string | null;
   fitness: FitnessProfile;
+  /** null until the member has been through (or skipped) their welcome flow. */
+  onboardedAt: ISODateTime | null;
 }
 
 export interface MembershipPlan {
@@ -229,11 +297,47 @@ export interface WorkoutSession {
   startedAt: ISODateTime;
   finishedAt: ISODateTime | null;
   programDayId: string | null;
+  /** Set when the session was started from a member-built workout. */
+  memberWorkoutId: string | null;
   title: string;
   durationSec: number;
   notes: string;
   status: SessionStatus;
   sets: SessionSet[];
+}
+
+/* ------------------------------------------------------------
+   Member-built workouts (§M.7)
+
+   Deliberately NOT a Program. A Program is prescribed by the gym
+   and assigning one clones a template; a MemberWorkout is the
+   member's own saved routine. Keeping them in separate tables is
+   what guarantees "member edits never overwrite what the coach
+   assigned" — it is structural, not a convention someone has to
+   remember.
+   ------------------------------------------------------------ */
+export interface MemberWorkoutExercise {
+  id: string;
+  exerciseId: string;
+  order: number;
+  sets: number;
+  reps: number;
+  targetWeightKg: number;
+  restSec: number;
+  notes: string;
+}
+
+export interface MemberWorkout {
+  id: string;
+  gymId: string;
+  memberId: string;
+  name: string;
+  focus: string;
+  notes: string;
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+  lastUsedAt: ISODateTime | null;
+  exercises: MemberWorkoutExercise[];
 }
 
 export interface BodyMeasurement {
@@ -281,6 +385,8 @@ export type MealSlot = 'breakfast' | 'lunch' | 'snack' | 'dinner';
 export interface DietItem {
   id: string;
   meal: MealSlot;
+  /** Position within the meal — members can reorder their own plan. */
+  order: number;
   item: string;
   qty: string;
   calories: number;
@@ -289,12 +395,23 @@ export interface DietItem {
   fat: number;
 }
 
+/**
+ * `assigned` plans belong to the coach; `personal` plans belong to
+ * the member. They are separate rows on purpose — a member editing
+ * their own plan must never silently overwrite what the gym
+ * prescribed, and the member screen shows both side by side.
+ */
+export type DietPlanSource = 'assigned' | 'personal';
+
 export interface DietPlan {
   id: string;
   gymId: string;
-  memberId: string | null;
+  memberId: string | null;       // null ⇒ reusable gym template
   name: string;
   waterTargetL: number;
+  source: DietPlanSource;
+  notes: string;
+  updatedAt: ISODateTime;
   items: DietItem[];
 }
 
@@ -367,6 +484,112 @@ export interface Announcement {
   publishedAt: ISODateTime;
 }
 
+/* ------------------------------------------------------------
+   PLATFORM-OWNED DATA (§M)
+
+   These rows have NO gymId of their own in the tenant sense —
+   they are the platform's, not a customer's, and only a
+   platform_admin session may read or write them. The gym-scoped
+   tenant() gate is never used on them; they have their own gate.
+   ------------------------------------------------------------ */
+
+/** The catalogue row, persisted so the catalog is extensible at runtime. */
+export interface PlatformFeature {
+  key: string;
+  name: string;
+  category: string;
+  description: string;
+  delivery: 'live' | 'designed';
+  requires: string[];
+  foundational: boolean;
+  /** Retired features stay in the table so history still reads correctly. */
+  archived: boolean;
+}
+
+export interface FeaturePackage {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  features: string[];
+  isDefault: boolean;
+  isSystem: boolean;
+  order: number;
+  createdAt: ISODateTime;
+}
+
+export type SubscriptionStatus = 'trial' | 'active' | 'suspended' | 'cancelled';
+
+/** What a customer has been assigned. One per gym. */
+export interface Subscription {
+  id: string;
+  gymId: string;
+  packageId: string;
+  status: SubscriptionStatus;
+  startedAt: ISODate;
+  renewsAt: ISODate | null;
+  notes: string;
+  updatedAt: ISODateTime;
+}
+
+/**
+ * An individual, per-customer decision that beats the package.
+ * Absence of a row means "inherit"; removing the row restores
+ * the inherited state, which is why `enabled: false` and "no
+ * override" are different things and must stay different.
+ */
+export interface FeatureOverride {
+  id: string;
+  gymId: string;
+  feature: string;
+  enabled: boolean;
+  reason: string;
+  setAt: ISODateTime;
+  setByUserId: string;
+}
+
+/** Platform configuration changes. Separate log, separate gate. */
+export interface PlatformAuditLog {
+  id: string;
+  at: ISODateTime;
+  actorUserId: string;
+  actorName: string;
+  action: string;
+  /** The customer affected, when there is one. */
+  gymId: string | null;
+  gymName: string;
+  entity: string;
+  entityId: string;
+  summary: string;
+  meta?: Record<string, unknown>;
+}
+
+export type PlatformUpdateKind = 'feature' | 'maintenance' | 'product' | 'notice';
+
+/** Platform-wide announcements. No delivery channel is wired up. */
+export interface PlatformUpdate {
+  id: string;
+  kind: PlatformUpdateKind;
+  title: string;
+  body: string;
+  publishedAt: ISODateTime | null;
+  createdAt: ISODateTime;
+  /** Who should see it in-app. */
+  audience: 'owners' | 'members' | 'everyone';
+}
+
+export interface PlatformSettings {
+  platformName: string;
+  supportEmail: string;
+  defaultPackageKey: string;
+  /** Offer "Explore with demo data" on the sign-in screens. */
+  demoModeEnabled: boolean;
+  /** Let a brand-new owner provision their own gym from sign-up. */
+  selfServeSignupEnabled: boolean;
+  /** Gyms start here unless changed. */
+  newGymStatus: GymStatus;
+}
+
 export interface AuditLog {
   id: string;
   gymId: string;
@@ -381,6 +604,15 @@ export interface AuditLog {
 /** The whole tenant-partitioned dataset, as one serialisable document. */
 export interface Database {
   version: number;
+  /* ---- platform-owned ---- */
+  features: PlatformFeature[];
+  packages: FeaturePackage[];
+  subscriptions: Subscription[];
+  overrides: FeatureOverride[];
+  platformAudit: PlatformAuditLog[];
+  platformUpdates: PlatformUpdate[];
+  settings: PlatformSettings;
+  /* ---- tenant-owned ---- */
   gyms: Gym[];
   users: User[];
   members: Member[];
@@ -396,6 +628,7 @@ export interface Database {
   water: WaterLog[];
   dietPlans: DietPlan[];
   mealCompletions: MealCompletion[];
+  workouts: MemberWorkout[];
   expenses: Expense[];
   notes: Note[];
   messages: Message[];
@@ -404,6 +637,18 @@ export interface Database {
 }
 
 /** What the verified token will carry; the demo adapter produces the same shape. */
+/**
+ * What the verified token will carry; the demo adapter produces
+ * the same shape.
+ *
+ * A platform_admin has no tenant, and carries PLATFORM_TENANT as
+ * its gymId rather than null. That is a deliberate trade: a
+ * sentinel that can never equal a real `gym_*` id means every
+ * tenant filter in the app returns an empty set for an admin
+ * automatically, without threading `string | null` through
+ * several hundred call sites where it would only ever be a
+ * non-null string in practice. `tenant()` rejects it outright.
+ */
 export interface Session {
   gymId: string;
   role: Role;

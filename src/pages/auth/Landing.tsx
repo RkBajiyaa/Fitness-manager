@@ -4,8 +4,13 @@ import { Button } from '../../components/ui/primitives';
 import { useApp } from '../../state/app';
 
 /**
- * Role selection. Brand, two choices, nothing else — no feature lists,
- * no statistics, no prototype language.
+ * Role selection. Two choices, nothing else — no feature lists, no
+ * statistics, no prototype language.
+ *
+ * The platform console is deliberately NOT advertised here: it is our
+ * internal tool, not a third product a customer should discover. It is
+ * reachable at /platform by anyone who knows to go there, and the admin
+ * credentials gate it.
  */
 export default function Landing() {
   const { theme, toggleTheme } = useApp();
@@ -40,7 +45,7 @@ export default function Landing() {
                   Run the studio — members, coaching, and the business behind it.
                 </span>
               </span>
-              <span className="rolecard__go">Sign in <Icon name="arrowRight" size={14} /></span>
+              <span className="rolecard__go">Continue <Icon name="arrowRight" size={14} /></span>
             </button>
 
             <button className="rolecard" onClick={() => nav('/signin/member')}>
@@ -51,7 +56,7 @@ export default function Landing() {
                   Today's session, your progress, and everything your coach has planned.
                 </span>
               </span>
-              <span className="rolecard__go">Sign in <Icon name="arrowRight" size={14} /></span>
+              <span className="rolecard__go">Continue <Icon name="arrowRight" size={14} /></span>
             </button>
           </div>
         </div>

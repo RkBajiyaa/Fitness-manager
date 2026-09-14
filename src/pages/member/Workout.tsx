@@ -14,9 +14,9 @@ import { formatClock } from './SessionPlayer';
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export default function Workout() {
-  const { session } = useApp();
+  const { session, has } = useApp();
   const nav = useNavigate();
-  const [view, setView] = useState<'today' | 'program' | 'history'>('today');
+  const [view, setView] = useState<'today' | 'program' | 'mine' | 'history'>('today');
   const today = todayISO();
   const memberId = session?.memberId ?? '';
 
@@ -24,6 +24,10 @@ export default function Workout() {
   const day = useData(() => (session && memberId ? api.programs.today(session, memberId) : null), [memberId]);
   const history = useData(() => (session && memberId ? api.sessions.completed(session, memberId) : []), [memberId]);
   const streaks = useData(() => (session && memberId ? api.streaks.forMember(session, memberId) : null), [memberId]);
+  const mine = useData(() => {
+    if (!session || !memberId || !has('workout_builder')) return [];
+    try { return api.workouts.list(session, memberId); } catch { return []; }
+  }, [memberId]);
 
   if (!session || !streaks) return null;
 
@@ -52,9 +56,70 @@ export default function Workout() {
         options={[
           { value: 'today', label: 'Today' },
           { value: 'program', label: 'Program' },
+          ...(has('workout_builder')
+            ? [{ value: 'mine' as const, label: 'Mine', count: mine.length }]
+            : []),
           { value: 'history', label: 'History', count: history.length },
         ]}
       />
+
+      {view === 'mine' && (
+        mine.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon="layers"
+              title="No workouts of your own yet"
+              message="Build a routine once and start it with one tap after that. Your own workouts never change what your coach has assigned."
+              action={(
+                <Button variant="primary" icon="plus" onClick={() => nav('/member/workouts/new')}>
+                  Build a workout
+                </Button>
+              )}
+            />
+          </Card>
+        ) : (
+          <div className="u-col u-gap-3">
+            {mine.map((w) => (
+              <Card key={w.id}>
+                <CardHead
+                  title={w.name}
+                  subtitle={w.focus || `${w.exercises.length} exercises`}
+                  action={(
+                    <Button size="sm" variant="ghost" icon="edit"
+                      onClick={() => nav(`/member/workouts/${w.id}`)} aria-label={`Edit ${w.name}`} />
+                  )}
+                />
+                <CardBody flush>
+                  <ul>
+                    {w.exercises.map((x, i) => (
+                      <li key={x.id} className="exline">
+                        <span className="exline__idx">{i + 1}</span>
+                        <span className="u-grow u-truncate">
+                          <span className="exline__name">{api.exercises.name(x.exerciseId)}</span>
+                        </span>
+                        <span className="exline__target u-nowrap">
+                          {x.sets} × {x.reps}{x.targetWeightKg ? ` · ${x.targetWeightKg}kg` : ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div style={{ padding: 'var(--s-4)' }}>
+                    <Button variant="primary" block icon="play" onClick={async () => {
+                      await api.sessions.start(session, memberId, { workoutId: w.id });
+                      nav('/member/session');
+                    }}>
+                      Start {w.name}
+                    </Button>
+                  </div>
+                </CardBody>
+              </Card>
+            ))}
+            <Button icon="plus" block onClick={() => nav('/member/workouts/new')}>
+              Build another workout
+            </Button>
+          </div>
+        )
+      )}
 
       {view === 'today' && (
         <>
@@ -227,8 +292,17 @@ export default function Workout() {
         ) : (
           <Card>
             <EmptyState icon="route" title="No program assigned"
-              message="Your coach can build you a structured week. Until then, log freely — everything still counts towards your progress."
-              action={<Button icon="library" onClick={() => nav('/member/exercises')}>Browse exercises</Button>} />
+              message="Your coach can build you a structured week. Until then, build your own workouts or log freely — everything still counts towards your progress."
+              action={(
+                <div className="u-row u-gap-2 u-wrap" style={{ justifyContent: 'center' }}>
+                  {has('workout_builder') && (
+                    <Button variant="primary" icon="plus" onClick={() => nav('/member/workouts/new')}>
+                      Build a workout
+                    </Button>
+                  )}
+                  <Button icon="library" onClick={() => nav('/member/exercises')}>Browse exercises</Button>
+                </div>
+              )} />
           </Card>
         )
       )}

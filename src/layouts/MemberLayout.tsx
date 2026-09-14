@@ -3,12 +3,17 @@ import { Icon, type IconName } from '../components/ui/Icon';
 import { Button, Avatar } from '../components/ui/primitives';
 import { useApp, useData } from '../state/app';
 import * as api from '../lib/api';
+import type { FeatureKey } from '../lib/platform/catalog';
 
-const TABS: Array<{ to: string; label: string; icon: IconName; end?: boolean }> = [
+/**
+ * The five tabs only exist if the gym has them. A member at a studio
+ * without Diet gets four tabs, not a fifth that refuses to open.
+ */
+const TABS: Array<{ to: string; label: string; icon: IconName; end?: boolean; feature?: FeatureKey }> = [
   { to: '/member', label: 'Home', icon: 'home', end: true },
-  { to: '/member/workout', label: 'Workout', icon: 'dumbbell' },
-  { to: '/member/progress', label: 'Progress', icon: 'activity' },
-  { to: '/member/diet', label: 'Diet', icon: 'utensils' },
+  { to: '/member/workout', label: 'Workout', icon: 'dumbbell', feature: 'workout_logging' },
+  { to: '/member/progress', label: 'Progress', icon: 'activity', feature: 'progress_tracking' },
+  { to: '/member/diet', label: 'Diet', icon: 'utensils', feature: 'diet_plans' },
   { to: '/member/profile', label: 'Profile', icon: 'user' },
 ];
 
@@ -18,13 +23,24 @@ const TABS: Array<{ to: string; label: string; icon: IconName; end?: boolean }> 
  * get better by being 1600px wide.
  */
 export function MemberLayout() {
-  const { session, storageDegraded } = useApp();
+  const { session, storageDegraded, has } = useApp();
   const nav = useNavigate();
   const memberId = session?.memberId ?? '';
 
-  const me = useData(() => (session && memberId ? api.members.get(session, memberId) : null), [memberId]);
-  const gym = useData(() => (session ? api.gyms.current(session) : null), [session?.gymId]);
-  const active = useData(() => (session && memberId ? api.sessions.active(session, memberId) : null), [memberId]);
+  const me = useData(() => {
+    if (!session || !memberId) return null;
+    try { return api.members.get(session, memberId); } catch { return null; }
+  }, [memberId]);
+  const gym = useData(() => {
+    if (!session) return null;
+    try { return api.gyms.current(session); } catch { return null; }
+  }, [session?.gymId]);
+  const active = useData(() => {
+    if (!session || !memberId) return null;
+    try { return api.sessions.active(session, memberId); } catch { return null; }
+  }, [memberId]);
+
+  const tabs = TABS.filter((t) => !t.feature || has(t.feature));
 
   return (
     <div className="mshell">
@@ -35,8 +51,10 @@ export function MemberLayout() {
             <div className="t-sm u-truncate" style={{ fontWeight: 620 }}>{me?.member.name}</div>
             <div className="t-xs t-faint u-truncate">{gym?.name}</div>
           </div>
-          <Button size="sm" variant="ghost" icon="trophy"
-            onClick={() => nav('/member/records')} aria-label="Personal records" />
+          {has('personal_records') && (
+            <Button size="sm" variant="ghost" icon="trophy"
+              onClick={() => nav('/member/records')} aria-label="Personal records" />
+          )}
         </div>
       </header>
 
@@ -72,7 +90,7 @@ export function MemberLayout() {
       </main>
 
       <nav className="bottomnav" aria-label="Primary">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end} className="bottomnav__item">
             <span className="bottomnav__icon"><Icon name={t.icon} size={20} /></span>
             {t.label}

@@ -3,12 +3,17 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { ReactNode } from 'react';
-import type { Session } from '../lib/types';
+import type { Role, Session } from '../lib/types';
 import {
-  getRevision, initDb, isPersistenceDegraded, loadSession, resetDatabase,
-  resolveSession, saveSession, subscribe,
+  featuresFor, getRevision, gymStatusFor, initDb, isPersistenceDegraded, loadSession,
+  resetDatabase, resolveSession, saveSession, subscribe,
 } from '../lib/db';
-import { authAdapter, AuthError, type AuthIdentity } from '../lib/auth';
+import { authAdapter, AuthError, DEMO_CREDENTIALS, type AuthIdentity } from '../lib/auth';
+import {
+  ensureDemoWorkspace, provisionMemberWorkspace, provisionOwnerWorkspace,
+  ProvisionError,
+} from '../lib/platform/provision';
+import type { FeatureKey } from '../lib/platform/catalog';
 import { Icon, type IconName } from '../components/ui/Icon';
 
 /* ============================================================
@@ -50,12 +55,19 @@ export interface CelebrationRequest {
 
 type Theme = 'light' | 'dark';
 
+export type SignInRole = 'owner' | 'member' | 'admin';
+
 interface AppValue {
   session: Session | null;
   identity: AuthIdentity | null;
   authReady: boolean;
-  signIn: (email: string, password: string) => Promise<Session>;
-  createAccount: (email: string, password: string, name: string) => Promise<Session>;
+  signIn: (email: string, password: string, preferRole?: Role) => Promise<Session>;
+  /** Materialises the demo workspace, then signs in as its owner or member. */
+  exploreDemo: (role: 'owner' | 'member') => Promise<Session>;
+  /** Start fresh: a brand-new, EMPTY gym owned by this person. */
+  signUpOwner: (input: { email: string; password: string; name: string; gymName: string }) => Promise<Session>;
+  /** Start fresh: an independent member with no history. */
+  signUpMember: (input: { email: string; password: string; name: string }) => Promise<Session>;
   resetPassword: (email: string) => Promise<void>;
   signOut: () => void;
   toast: (tone: ToastTone, title: string, message?: string) => void;
@@ -63,8 +75,13 @@ interface AppValue {
   celebrate: (req: CelebrationRequest) => void;
   theme: Theme;
   toggleTheme: () => void;
-  reseed: () => void;
   storageDegraded: boolean;
+  /* ---- entitlements, read straight from the store ---- */
+  features: Set<FeatureKey>;
+  has: (feature: FeatureKey) => boolean;
+  gymSuspended: boolean;
+  /** Wipes the store back to a bare platform. Development only. */
+  hardReset: () => void;
 }
 
 const Ctx = createContext<AppValue | null>(null);
@@ -123,12 +140,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
    * Identity → session. The screen supplies credentials and nothing else;
    * role and gym are resolved from stored data (docs/ARCHITECTURE.md §I.2).
    */
-  const adopt = useCallback((id: AuthIdentity): Session => {
-    const resolved = resolveSession(id);
+  const adopt = useCallback((id: AuthIdentity, preferRole?: Role): Session => {
+    const resolved = resolveSession(id, preferRole);
     if (!resolved) {
       throw new AuthError(
         'user_not_found',
-        'That account is not linked to a gym yet. Ask your gym to add you as a member.',
+        'That account is not linked to a gym yet. Ask your gym to add you as a member, or start fresh with your own workspace.',
       );
     }
     saveSession(resolved);
@@ -137,13 +154,64 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return resolved;
   }, []);
 
+  /**
+   * Entitlements re-read on every store revision, exactly like any other
+   * derived value. A feature switched off in the platform console reaches
+   * the owner's navigation on their next render — no cache to invalidate.
+   */
+  const features = useData(
+    () => (session && session.role !== 'platform_admin' ? featuresFor(session.gymId) : new Set<FeatureKey>()),
+    [session?.gymId, session?.role],
+  );
+  const gymSuspended = useData(
+    () => (session ? gymStatusFor(session) === 'suspended' : false),
+    [session?.gymId, session?.role],
+  );
+
+  const has = useCallback(
+    (feature: FeatureKey) => features.has(feature),
+    [features],
+  );
+
   const value = useMemo<AppValue>(() => ({
     session,
     identity,
     authReady: true,
-    signIn: async (email, password) => adopt(await authAdapter.signIn(email, password)),
-    createAccount: async (email, password, name) =>
-      adopt(await authAdapter.createAccount(email, password, name)),
+    signIn: async (email, password, preferRole) =>
+      adopt(await authAdapter.signIn(email, password), preferRole),
+
+    exploreDemo: async (role) => {
+      // Build the demonstration studios on first request, then sign in with
+      // the documented development credentials.
+      ensureDemoWorkspace();
+      const cred = DEMO_CREDENTIALS.find((c) => c.role === role);
+      if (!cred) throw new AuthError('user_not_found', 'No demo account for that role.');
+      const id = await authAdapter.signIn(cred.email, cred.password);
+      return adopt(id, role);
+    },
+
+    signUpOwner: async ({ email, password, name, gymName }) => {
+      const id = await authAdapter.createAccount(email, password, name);
+      try {
+        provisionOwnerWorkspace(id, { gymName, ownerName: name });
+      } catch (e) {
+        if (e instanceof ProvisionError) throw new AuthError('email_in_use', e.message);
+        throw e;
+      }
+      return adopt(id, 'owner');
+    },
+
+    signUpMember: async ({ email, password, name }) => {
+      const id = await authAdapter.createAccount(email, password, name);
+      try {
+        provisionMemberWorkspace(id, { name });
+      } catch (e) {
+        if (e instanceof ProvisionError) throw new AuthError('email_in_use', e.message);
+        throw e;
+      }
+      return adopt(id, 'member');
+    },
+
     resetPassword: (email) => authAdapter.sendPasswordReset(email),
     signOut: () => {
       void authAdapter.signOut();
@@ -156,12 +224,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     celebrate: setCelebration,
     theme,
     toggleTheme: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
-    reseed: () => {
-      resetDatabase();
-      toast('success', 'Demo data rebuilt', 'Every screen now reads from a fresh dataset.');
-    },
     storageDegraded,
-  }), [session, identity, toast, confirm, theme, adopt, storageDegraded]);
+    features,
+    has,
+    gymSuspended,
+    hardReset: () => {
+      resetDatabase();
+      saveSession(null);
+      setIdentity(null);
+      setSession(null);
+      toast('success', 'Everything cleared', 'The store is back to a bare platform.');
+    },
+  }), [session, identity, toast, confirm, theme, adopt, storageDegraded, features, has, gymSuspended]);
 
   return (
     <Ctx.Provider value={value}>

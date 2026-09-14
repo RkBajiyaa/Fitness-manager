@@ -10,23 +10,33 @@ import { sessionVolume } from '../../lib/derive';
 import { dateShort, money, relativeDay } from '../../lib/format';
 import { addDays, todayISO } from '../../lib/date';
 
+/** Cross-module reads: a gym can have Diet or Hydration switched off. */
+function safe<T>(fn: () => T, fallback: T): T {
+  try { return fn(); } catch { return fallback; }
+}
+
 export default function MemberHome() {
-  const { session, toast } = useApp();
+  const { session, toast, has } = useApp();
   const nav = useNavigate();
   const [weighIn, setWeighIn] = useState(false);
   const today = todayISO();
   const memberId = session?.memberId ?? '';
 
-  const me = useData(() => (session && memberId ? api.members.get(session, memberId) : null), [memberId]);
-  const streaks = useData(() => (session && memberId ? api.streaks.forMember(session, memberId) : null), [memberId]);
-  const day = useData(() => (session && memberId ? api.programs.today(session, memberId) : null), [memberId]);
-  const program = useData(() => (session && memberId ? api.programs.forMember(session, memberId) : null), [memberId]);
-  const todaySession = useData(() => (session && memberId ? api.sessions.onDate(session, memberId, today) : null), [memberId]);
-  const activeSession = useData(() => (session && memberId ? api.sessions.active(session, memberId) : null), [memberId]);
-  const latest = useData(() => (session && memberId ? api.measurements.latest(session, memberId) : null), [memberId]);
-  const waterMl = useData(() => (session && memberId ? api.water.today(session, memberId) : 0), [memberId]);
-  const recentSessions = useData(() => (session && memberId ? api.sessions.completed(session, memberId).slice(0, 8) : []), [memberId]);
-  const news = useData(() => (session ? api.announcements.list(session) : []), [session?.gymId]);
+  const me = useData(() => (session && memberId ? safe(() => api.members.get(session, memberId), null) : null), [memberId]);
+  const streaks = useData(() => (session && memberId ? safe(() => api.streaks.forMember(session, memberId), null) : null), [memberId]);
+  const day = useData(() => (session && memberId ? safe(() => api.programs.today(session, memberId), null) : null), [memberId]);
+  const program = useData(() => (session && memberId ? safe(() => api.programs.forMember(session, memberId), null) : null), [memberId]);
+  const todaySession = useData(() => (session && memberId ? safe(() => api.sessions.onDate(session, memberId, today), null) : null), [memberId]);
+  const activeSession = useData(() => (session && memberId ? safe(() => api.sessions.active(session, memberId), null) : null), [memberId]);
+  const latest = useData(() => (session && memberId ? safe(() => api.measurements.latest(session, memberId), null) : null), [memberId]);
+  const waterMl = useData(() => (session && memberId ? safe(() => api.water.today(session, memberId), 0) : 0), [memberId]);
+  const recentSessions = useData(() => (session && memberId ? safe(() => api.sessions.completed(session, memberId).slice(0, 8), []) : []), [memberId]);
+  const news = useData(() => (session ? safe(() => api.announcements.list(session), []) : []), [session?.gymId]);
+  const platformNews = useData(() => api.platform.publishedUpdates('members'), []);
+  const myWorkouts = useData(
+    () => (session && memberId ? safe(() => api.workouts.list(session, memberId), []) : []),
+    [memberId],
+  );
 
   if (!session || !me || !streaks) return null;
 
@@ -218,6 +228,7 @@ export default function MemberHome() {
             <span className="ringcell__value">{todaySession ? 'Done' : restDay ? 'Rest' : 'To do'}</span>
           </button>
 
+          {has('hydration_tracking') && (
           <div className="ringcell" style={{ cursor: 'default' }}>
             <Ring value={waterMl} max={target} size={58} color="var(--series-1)"
               label={`Hydration ${Math.round((waterMl / target) * 100)} percent`}>
@@ -228,25 +239,87 @@ export default function MemberHome() {
             <span className="ringcell__label">Water</span>
             <span className="ringcell__value">{(target / 1000).toFixed(1)} L target</span>
           </div>
+          )}
 
-          <button className="ringcell" onClick={() => setWeighIn(true)}>
-            <Ring value={weighedToday ? 1 : 0} max={1} size={58} color="var(--series-3)"
-              label="Weight logged today">
-              <Icon name="scale" size={18} style={{ color: weighedToday ? 'var(--series-3)' : 'var(--text-3)' }} />
-            </Ring>
-            <span className="ringcell__label">Weight</span>
-            <span className="ringcell__value">{latest ? `${latest.weightKg} kg` : '—'}</span>
-          </button>
-        </div>
-
-        <div className="u-row u-gap-2 u-mt-3" style={{ justifyContent: 'center' }}>
-          <Button size="sm" icon="plus" onClick={() => addWater(250)}>250 ml</Button>
-          <Button size="sm" icon="plus" onClick={() => addWater(500)}>500 ml</Button>
-          {waterMl > 0 && (
-            <Button size="sm" variant="ghost" icon="undo" onClick={() => addWater(-1)} aria-label="Undo last glass" />
+          {has('body_measurements') && (
+            <button className="ringcell" onClick={() => setWeighIn(true)}>
+              <Ring value={weighedToday ? 1 : 0} max={1} size={58} color="var(--series-3)"
+                label="Weight logged today">
+                <Icon name="scale" size={18} style={{ color: weighedToday ? 'var(--series-3)' : 'var(--text-3)' }} />
+              </Ring>
+              <span className="ringcell__label">Weight</span>
+              <span className="ringcell__value">{latest ? `${latest.weightKg} kg` : '—'}</span>
+            </button>
           )}
         </div>
+
+        {has('hydration_tracking') && (
+          <div className="u-row u-gap-2 u-mt-3" style={{ justifyContent: 'center' }}>
+            <Button size="sm" icon="plus" onClick={() => addWater(250)}>250 ml</Button>
+            <Button size="sm" icon="plus" onClick={() => addWater(500)}>500 ml</Button>
+            {waterMl > 0 && (
+              <Button size="sm" variant="ghost" icon="undo" onClick={() => addWater(-1)} aria-label="Undo last glass" />
+            )}
+          </div>
+        )}
       </section>
+
+      {/*
+        A brand-new member. No fabricated streak, no fake achievement —
+        just the three things that make the app start working for them.
+      */}
+      {streaks.totalSessions === 0 && !latest && (
+        <Card>
+          <CardHead
+            title="Your first steps"
+            subtitle="Nothing here is filled in for you — it starts when you do"
+          />
+          <CardBody flush>
+            <ul className="cardlist">
+              {has('body_measurements') && (
+              <li>
+                <button className="cardlist__item" onClick={() => setWeighIn(true)}>
+                  <span className="quickaction__icon"><Icon name="scale" size={17} /></span>
+                  <span className="u-grow">
+                    <span className="t-sm" style={{ fontWeight: 550 }}>Record your weight</span>
+                    <span className="t-xs t-faint" style={{ display: 'block', marginTop: 2 }}>
+                      The first point on your progress chart
+                    </span>
+                  </span>
+                  <Icon name="chevronRight" size={15} className="t-faint" />
+                </button>
+              </li>
+              )}
+              {has('workout_builder') && (
+                <li>
+                  <Link className="cardlist__item" to="/member/workouts/new">
+                    <span className="quickaction__icon"><Icon name="layers" size={17} /></span>
+                    <span className="u-grow">
+                      <span className="t-sm" style={{ fontWeight: 550 }}>Build your first workout</span>
+                      <span className="t-xs t-faint" style={{ display: 'block', marginTop: 2 }}>
+                        Pick exercises once, start it with one tap after that
+                      </span>
+                    </span>
+                    <Icon name="chevronRight" size={15} className="t-faint" />
+                  </Link>
+                </li>
+              )}
+              <li>
+                <Link className="cardlist__item" to="/member/session">
+                  <span className="quickaction__icon"><Icon name="play" size={17} /></span>
+                  <span className="u-grow">
+                    <span className="t-sm" style={{ fontWeight: 550 }}>Log a session</span>
+                    <span className="t-xs t-faint" style={{ display: 'block', marginTop: 2 }}>
+                      Your records and streak start from the first set you finish
+                    </span>
+                  </span>
+                  <Icon name="chevronRight" size={15} className="t-faint" />
+                </Link>
+              </li>
+            </ul>
+          </CardBody>
+        </Card>
+      )}
 
       {/* ---- Quick actions ---- */}
       <section>
@@ -256,18 +329,31 @@ export default function MemberHome() {
             <span className="quickaction__icon"><Icon name="dumbbell" size={18} /></span>
             Log workout
           </Link>
-          <button className="quickaction" onClick={() => setWeighIn(true)}>
-            <span className="quickaction__icon"><Icon name="scale" size={18} /></span>
-            Record weight
-          </button>
-          <Link className="quickaction" to="/member/exercises">
-            <span className="quickaction__icon"><Icon name="library" size={18} /></span>
-            Exercises
-          </Link>
-          <Link className="quickaction" to="/member/records">
-            <span className="quickaction__icon"><Icon name="trophy" size={18} /></span>
-            Records
-          </Link>
+          {has('body_measurements') && (
+            <button className="quickaction" onClick={() => setWeighIn(true)}>
+              <span className="quickaction__icon"><Icon name="scale" size={18} /></span>
+              Record weight
+            </button>
+          )}
+          {has('workout_builder') && (
+            <Link className="quickaction" to="/member/workouts">
+              <span className="quickaction__icon"><Icon name="layers" size={18} /></span>
+              My workouts
+              {myWorkouts.length > 0 && <span className="quickaction__count">{myWorkouts.length}</span>}
+            </Link>
+          )}
+          {has('exercise_library') && (
+            <Link className="quickaction" to="/member/exercises">
+              <span className="quickaction__icon"><Icon name="library" size={18} /></span>
+              Exercises
+            </Link>
+          )}
+          {has('personal_records') && (
+            <Link className="quickaction" to="/member/records">
+              <span className="quickaction__icon"><Icon name="trophy" size={18} /></span>
+              Records
+            </Link>
+          )}
         </div>
       </section>
 
@@ -313,12 +399,18 @@ export default function MemberHome() {
         </CardBody>
       </Card>
 
-      {news.length > 0 && (
+      {(news.length > 0 || platformNews.length > 0) && (
         <Card>
-          <CardHead title="From the studio" />
+          <CardHead title={news.length ? 'From the studio' : 'From Fitness Manager'} />
           <CardBody flush>
             <ul className="cardlist">
-              {news.slice(0, 2).map((a) => (
+              {(news.length
+                ? news.slice(0, 2)
+                : platformNews.slice(0, 2).map((u) => ({
+                  id: u.id, title: u.title, body: u.body,
+                  publishedAt: u.publishedAt ?? u.createdAt,
+                }))
+              ).map((a) => (
                 <li key={a.id} className="cardlist__item" style={{ cursor: 'default', alignItems: 'flex-start' }}>
                   <span className="u-grow" style={{ minWidth: 0 }}>
                     <span className="t-sm" style={{ fontWeight: 580 }}>{a.title}</span>

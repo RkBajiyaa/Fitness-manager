@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Avatar, Button, EmptyState } from '../ui/primitives';
 import { Icon } from '../ui/Icon';
 import type { MemberRow } from '../../lib/api';
@@ -29,7 +29,6 @@ export function AttentionQueue({
   emptyTitle?: string;
   emptyMessage?: string;
 }) {
-  const nav = useNavigate();
   const shown = limit ? rows.slice(0, limit) : rows;
 
   if (!rows.length) {
@@ -42,53 +41,58 @@ export function AttentionQueue({
         const e = row.engagement;
         const primary = e.signals[0];
         return (
-          <li key={row.member.id}>
-            <button className="attnrow" onClick={() => nav(`/owner/members/${row.member.id}`)}>
-              <span className="attnrow__bar" style={{ background: LEVEL_COLOR[e.level] }} />
-              <Avatar name={row.member.name} size="sm" />
+          /*
+            The whole row is clickable, but it is NOT a <button>: the actions
+            inside it are buttons too, and a button inside a button is invalid
+            HTML that browsers resolve unpredictably. The member's name is the
+            one real link, stretched over the row by CSS; the actions sit above
+            it. Same target area, valid markup, sane tab order.
+          */
+          <li key={row.member.id} className="attnrow">
+            <span className="attnrow__bar" style={{ background: LEVEL_COLOR[e.level] }} />
+            <Avatar name={row.member.name} size="sm" />
 
-              <span className="u-grow" style={{ minWidth: 0 }}>
-                <span className="u-between u-gap-2">
-                  <span className="attnrow__name u-truncate">{row.member.name}</span>
-                  <LevelChip level={e.level} />
-                </span>
+            <span className="u-grow" style={{ minWidth: 0 }}>
+              <span className="u-between u-gap-2">
+                <Link className="attnrow__name attnrow__link u-truncate" to={`/owner/members/${row.member.id}`}>
+                  {row.member.name}
+                </Link>
+                <LevelChip level={e.level} />
+              </span>
 
-                <span className="signals">
-                  {e.signals.slice(0, 3).map((s) => (
-                    <span key={s.code} className="signal">
-                      <span className="signal__dot" style={{ background: LEVEL_COLOR[e.level] }} />
-                      {s.reason}
-                    </span>
-                  ))}
-                  {e.signals.length > 3 && (
-                    <span className="signal t-faint">+{e.signals.length - 3} more</span>
-                  )}
-                </span>
-
-                {onAct && (
-                  <span className="u-row u-gap-2 u-wrap" style={{ marginTop: 'var(--s-3)' }}>
-                    {primary?.code === 'payment_due' && (
-                      <Button size="sm" variant="primary"
-                        onClick={(ev) => { ev.stopPropagation(); onAct(row, 'payment'); }}>
-                        Collect payment
-                      </Button>
-                    )}
-                    {e.signals.some((s) => s.code === 'expiring') && (
-                      <Button size="sm" variant={primary?.code === 'expiring' ? 'primary' : 'secondary'}
-                        onClick={(ev) => { ev.stopPropagation(); onAct(row, 'renew'); }}>
-                        Renew
-                      </Button>
-                    )}
-                    <Button size="sm" icon="message"
-                      onClick={(ev) => { ev.stopPropagation(); onAct(row, 'message'); }}>
-                      Message
-                    </Button>
+              <span className="signals">
+                {e.signals.slice(0, 3).map((s) => (
+                  <span key={s.code} className="signal">
+                    <span className="signal__dot" style={{ background: LEVEL_COLOR[e.level] }} />
+                    {s.reason}
                   </span>
+                ))}
+                {e.signals.length > 3 && (
+                  <span className="signal t-faint">+{e.signals.length - 3} more</span>
                 )}
               </span>
 
-              <Icon name="chevronRight" size={16} className="t-faint" style={{ marginTop: 4 }} />
-            </button>
+              {onAct && (
+                <span className="u-row u-gap-2 u-wrap attnrow__actions" style={{ marginTop: 'var(--s-3)' }}>
+                  {primary?.code === 'payment_due' && (
+                    <Button size="sm" variant="primary" onClick={() => onAct(row, 'payment')}>
+                      Collect payment
+                    </Button>
+                  )}
+                  {e.signals.some((s) => s.code === 'expiring') && (
+                    <Button size="sm" variant={primary?.code === 'expiring' ? 'primary' : 'secondary'}
+                      onClick={() => onAct(row, 'renew')}>
+                      Renew
+                    </Button>
+                  )}
+                  <Button size="sm" icon="message" onClick={() => onAct(row, 'message')}>
+                    Message
+                  </Button>
+                </span>
+              )}
+            </span>
+
+            <Icon name="chevronRight" size={16} className="t-faint" style={{ marginTop: 4 }} />
           </li>
         );
       })}

@@ -31,8 +31,13 @@ const EXPERIENCE_LABEL: Record<TrainingExperience, string> = {
 
 const DAY_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+/** Profile must always open, even at a gym without Goals or Measurements. */
+function safe<T>(fn: () => T, fallback: T): T {
+  try { return fn(); } catch { return fallback; }
+}
+
 export default function MemberProfilePage() {
-  const { session, theme, toggleTheme, signOut, confirm } = useApp();
+  const { session, theme, toggleTheme, signOut, confirm, has } = useApp();
   const nav = useNavigate();
   const memberId = session?.memberId ?? '';
   const [tab, setTab] = useState<Tab>('personal');
@@ -41,10 +46,22 @@ export default function MemberProfilePage() {
 
   const me = useData(() => (session && memberId ? api.members.get(session, memberId) : null), [memberId]);
   const gym = useData(() => (session ? api.gyms.current(session) : null), [session?.gymId]);
-  const latest = useData(() => (session && memberId ? api.measurements.latest(session, memberId) : null), [memberId]);
-  const payments = useData(() => (session && memberId ? api.payments.forMember(session, memberId) : []), [memberId]);
-  const goals = useData(() => (session && memberId ? api.goals.progress(session, memberId) : []), [memberId]);
-  const messages = useData(() => (session ? api.messages.list(session) : []), [session?.gymId]);
+  const latest = useData(
+    () => (session && memberId ? safe(() => api.measurements.latest(session, memberId), null) : null),
+    [memberId],
+  );
+  const payments = useData(
+    () => (session && memberId ? safe(() => api.payments.forMember(session, memberId), []) : []),
+    [memberId],
+  );
+  const goals = useData(
+    () => (session && memberId ? safe(() => api.goals.progress(session, memberId), []) : []),
+    [memberId],
+  );
+  const messages = useData(
+    () => (session ? safe(() => api.messages.list(session), []) : []),
+    [session?.gymId],
+  );
 
   if (!session || !me || !gym) return null;
   const { member, membership, status, daysLeft, dues } = me;
@@ -84,13 +101,15 @@ export default function MemberProfilePage() {
         </CardBody>
       </Card>
 
+      {/* Goals is a feature, not a given — a gym without it gets three tabs. */}
       <Segmented
-        ariaLabel="Profile section" value={tab} onChange={setTab}
+        ariaLabel="Profile section" value={tab === 'goals' && !has('goals') ? 'personal' : tab}
+        onChange={setTab}
         options={[
-          { value: 'personal', label: 'Personal' },
-          { value: 'fitness', label: 'Fitness' },
-          { value: 'goals', label: 'Goals' },
-          { value: 'preferences', label: 'Settings' },
+          { value: 'personal' as Tab, label: 'Personal' },
+          { value: 'fitness' as Tab, label: 'Fitness' },
+          ...(has('goals') ? [{ value: 'goals' as Tab, label: 'Goals' }] : []),
+          { value: 'preferences' as Tab, label: 'Settings' },
         ]}
       />
 
@@ -247,7 +266,7 @@ export default function MemberProfilePage() {
       )}
 
       {/* ================= GOALS ================= */}
-      {tab === 'goals' && (
+      {tab === 'goals' && has('goals') && (
         <div className="u-col u-gap-4">
           <div className="u-between">
             <h2 className="t-label">Your goals</h2>

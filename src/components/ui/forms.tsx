@@ -152,14 +152,21 @@ export function SearchInput({
   );
 }
 
-export function Switch({ checked, onChange, label }: {
+export function Switch({ checked, onChange, label, hideLabel, disabled }: {
   checked: boolean; onChange: (v: boolean) => void; label: string;
+  /** Keeps the label for screen readers while the row itself carries the name. */
+  hideLabel?: boolean;
+  disabled?: boolean;
 }) {
   return (
-    <label className="switch">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className={`switch ${disabled ? 'switch--disabled' : ''}`}>
+      <input
+        type="checkbox" checked={checked} disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={hideLabel ? label : undefined}
+      />
       <span className="switch__track"><span className="switch__thumb" /></span>
-      <span className="t-sm">{label}</span>
+      <span className={hideLabel ? 'sr-only' : 't-sm'}>{label}</span>
     </label>
   );
 }
