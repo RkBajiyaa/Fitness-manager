@@ -444,12 +444,135 @@ export function lastPerformance(
   return null;
 }
 
+/**
+ * Every countable set of one exercise, from the last session that
+ * contained it.
+ *
+ * `lastPerformance()` above answers "what was the best set?" and is
+ * what prefill uses. This answers "what did the whole thing look
+ * like?", which is what the member actually wants to see in the
+ * player — three sets at 60/60/57.5 tells them something that
+ * "60 kg × 8" does not.
+ */
+export interface PreviousPerformance {
+  date: ISODate;
+  sets: Array<{ reps: number; weightKg: number }>;
+  bestWeightKg: number;
+  bestReps: number;
+  /** Working volume of that exercise on that day. */
+  volume: number;
+}
+
+export function lastExercisePerformance(
+  sessions: WorkoutSession[], exerciseId: string, excludeSessionId?: string,
+): PreviousPerformance | null {
+  const ordered = [...sessions].sort((a, b) => b.date.localeCompare(a.date));
+  for (const session of ordered) {
+    if (session.id === excludeSessionId) continue;
+    const sets = countableSets(session.sets)
+      .filter((s) => s.exerciseId === exerciseId)
+      .sort((a, b) => a.setNo - b.setNo);
+    if (!sets.length) continue;
+    const best = sets.reduce((a, b) => (b.weightKg > a.weightKg ? b : a));
+    return {
+      date: session.date,
+      sets: sets.map((s) => ({ reps: s.reps, weightKg: s.weightKg })),
+      bestWeightKg: best.weightKg,
+      bestReps: best.reps,
+      volume: sets.reduce((sum, s) => sum + s.reps * (s.weightKg || 0), 0),
+    };
+  }
+  return null;
+}
+
+/**
+ * A restrained progression nudge (§18).
+ *
+ * Fires only when the member cleared the TOP of the prescribed rep
+ * range on every working set last time, at or above the prescribed
+ * load. That is a deliberately high bar: a hint that appears after
+ * one good set is noise, and noise gets ignored, and then the one
+ * time it matters it gets ignored too.
+ *
+ * It suggests. It never changes a number, and it makes no claim
+ * about what the member's body can do — "consider" is the whole
+ * vocabulary.
+ */
+export interface ProgressionHint {
+  tone: 'ready';
+  message: string;
+}
+
+export function progressionHint(
+  prescribed: { reps: number; repsMax: number; targetWeightKg: number },
+  previous: PreviousPerformance | null,
+): ProgressionHint | null {
+  if (!previous || !previous.sets.length) return null;
+  // No prescribed range means nothing to top out of.
+  if (!prescribed.repsMax || prescribed.repsMax <= prescribed.reps) return null;
+
+  const allTopped = previous.sets.every((s) => s.reps >= prescribed.repsMax);
+  if (!allTopped) return null;
+
+  // Bodyweight and machine work where no target was set: still worth
+  // saying, but without implying a plate.
+  const loaded = prescribed.targetWeightKg > 0 && previous.bestWeightKg > 0;
+  if (loaded && previous.bestWeightKg < prescribed.targetWeightKg) return null;
+
+  return {
+    tone: 'ready',
+    message: loaded
+      ? `You hit ${prescribed.repsMax} reps on every set last time. Consider a small increase.`
+      : `You hit ${prescribed.repsMax} reps on every set last time. Consider making it harder.`,
+  };
+}
+
 /* ============================================================
    Programs
    ============================================================ */
 
+/**
+ * An honest estimate of how long a planned day takes, in minutes.
+ *
+ * Uses the plan's own figure when it has one. Otherwise it is
+ * COMPUTED — roughly 45 seconds of work per set plus the prescribed
+ * rest, plus a minute and a half per warm-up movement — rather than
+ * guessed. Returns 0 when there is nothing to estimate, and the UI
+ * then says nothing at all instead of printing "0 min", which is the
+ * same rule `currentlyInside()` follows for occupancy.
+ */
+export function estimateDayMinutes(day: ProgramDay): number {
+  if (day.estimatedMin > 0) return day.estimatedMin;
+  if (!day.exercises.length && !day.warmupExerciseIds.length) return 0;
+  const working = day.exercises.reduce(
+    (sum, e) => sum + Math.max(1, e.sets) * (45 + (e.restSec || 60)), 0);
+  const warmup = day.warmupExerciseIds.length * 90;
+  return Math.max(1, Math.round((working + warmup) / 60));
+}
+
+/**
+ * Which day of the plan today is.
+ *
+ * A `weekly` plan repeats the same seven days, so the answer is the
+ * day of the week. A `numbered` plan (the 30-day beginner
+ * foundation) counts forward from `startedAt` — day 1 on the day
+ * they enrolled, day 30 twenty-nine days later, and nothing after
+ * that. Both are DERIVED; storing "which day am I on" drifts the
+ * first time somebody misses a Tuesday.
+ *
+ * `schedule` is read defensively because programs seeded before it
+ * existed do not carry one, and they are all weekly.
+ */
 export function programDayFor(program: Program | null, date: ISODate): ProgramDay | null {
   if (!program) return null;
+
+  if (program.schedule === 'numbered') {
+    if (!program.startedAt) return null;
+    const dayNo = diffDays(program.startedAt, date) + 1;
+    if (dayNo < 1) return null;
+    return program.days.find((d) => d.dayNo === dayNo) ?? null;
+  }
+
   const dow = new Date(date + 'T00:00:00').getDay();
   return program.days.find((d) => d.dayIndex === dow) ?? null;
 }

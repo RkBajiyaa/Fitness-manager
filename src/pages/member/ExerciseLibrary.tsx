@@ -22,7 +22,7 @@ export default function ExerciseLibrary() {
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState<Exercise | null>(null);
 
-  const facets = useData(() => (session ? api.exercises.facets(session) : { muscleGroups: [], equipment: [] }), [session?.gymId]);
+  const facets = useData(() => (session ? api.exercises.facets(session) : { muscleGroups: [], equipment: [], difficulties: [], kinds: [] }), [session?.gymId]);
   const all = useData(() => (session ? api.exercises.list(session, { q, muscleGroup: muscle, equipment }) : []),
     [q, muscle, equipment]);
 
@@ -72,10 +72,10 @@ export default function ExerciseLibrary() {
       <div className="u-row u-gap-2 u-wrap">
         <SelectField aria-label="Muscle group" value={muscle} onChange={(e) => setMuscle(e.target.value)}
           options={[{ value: 'all', label: 'All muscles' },
-            ...facets.muscleGroups.map((m) => ({ value: m, label: m }))]} />
+            ...facets.muscleGroups]} />
         <SelectField aria-label="Equipment" value={equipment} onChange={(e) => setEquipment(e.target.value)}
           options={[{ value: 'all', label: 'All equipment' },
-            ...facets.equipment.map((m) => ({ value: m, label: m }))]} />
+            ...facets.equipment]} />
       </div>
 
       {rows.length === 0 ? (
@@ -99,9 +99,11 @@ export default function ExerciseLibrary() {
                 <span className="excard__name">{e.name}</span>
                 {e.scope === 'member' && <span className="tag tag--custom">Mine</span>}
               </div>
-              <span className="excard__meta">{e.muscleGroup} · {e.equipment}</span>
+              <span className="excard__meta">
+                  {api.exercises.label.muscleGroup(e.muscleGroup)} · {api.exercises.label.equipment(e.equipment)}
+                </span>
               <span className="excard__tags">
-                <span className="tag">{titleCase(e.kind)}</span>
+                <span className="tag">{api.exercises.label.kind(e.kind)}</span>
                 <span className="tag">{titleCase(e.difficulty)}</span>
               </span>
             </button>
@@ -109,10 +111,10 @@ export default function ExerciseLibrary() {
         </div>
       )}
 
-      {creating && <CreateExercise onClose={() => setCreating(false)} muscles={facets.muscleGroups} />}
+      {creating && <CreateExercise onClose={() => setCreating(false)} />}
 
       {detail && (
-        <Modal title={detail.name} subtitle={`${detail.muscleGroup} · ${detail.equipment}`}
+        <Modal title={detail.name} subtitle={`${api.exercises.label.muscleGroup(detail.muscleGroup)} · ${api.exercises.label.equipment(detail.equipment)}`}
           onClose={() => setDetail(null)}
           footer={
             <>
@@ -157,11 +159,11 @@ export default function ExerciseLibrary() {
   );
 }
 
-function CreateExercise({ onClose, muscles }: { onClose: () => void; muscles: string[] }) {
+function CreateExercise({ onClose }: { onClose: () => void }) {
   const { session, toast } = useApp();
   const [name, setName] = useState('');
-  const [muscleGroup, setMuscleGroup] = useState(muscles[0] ?? 'Chest');
-  const [equipment, setEquipment] = useState('Dumbbell');
+  const [muscleGroup, setMuscleGroup] = useState('chest');
+  const [equipment, setEquipment] = useState('dumbbell');
   const [kind, setKind] = useState<ExerciseKind>('strength');
   const [instructions, setInstructions] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -196,11 +198,9 @@ function CreateExercise({ onClose, muscles }: { onClose: () => void; muscles: st
         <div className="form-grid">
           <SelectField label="Muscle group" value={muscleGroup} error={errors.muscleGroup}
             onChange={(e) => setMuscleGroup(e.target.value)}
-            options={[...new Set([...muscles, 'Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio'])]
-              .map((m) => ({ value: m, label: m }))} />
+            options={api.exercises.taxonomy().muscleGroups.map((m) => ({ value: m.key, label: m.label }))} />
           <SelectField label="Equipment" value={equipment} onChange={(e) => setEquipment(e.target.value)}
-            options={['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Bodyweight', 'Kettlebell', 'Bands', 'Other']
-              .map((m) => ({ value: m, label: m }))} />
+            options={api.exercises.taxonomy().equipment.map((m) => ({ value: m.key, label: m.label }))} />
         </div>
         <SelectField label="Type" value={kind} onChange={(e) => setKind(e.target.value as ExerciseKind)}
           options={[

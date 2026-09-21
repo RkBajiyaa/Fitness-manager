@@ -678,7 +678,7 @@ function TrainingTab({ id }: { id: string }) {
               <span className="u-grow u-truncate">
                 <span className="t-sm" style={{ fontWeight: 550 }}>{r.exerciseName}</span>
                 <span className="t-xs t-faint" style={{ display: 'block' }}>
-                  {r.muscleGroup} · {r.totalSets} working sets
+                  {api.exercises.label.muscleGroup(r.muscleGroup)} · {r.totalSets} working sets
                 </span>
               </span>
               <span className="u-right u-nowrap">

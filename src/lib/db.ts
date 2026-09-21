@@ -19,9 +19,9 @@ import {
 } from './platform/entitlements';
 import { roleCan, type Capability } from './platform/permissions';
 
-const STORAGE_KEY = 'fm.db.v3';
-const SESSION_KEY = 'fm.session.v3';
-const SCHEMA_VERSION = 3;
+const STORAGE_KEY = 'fm.db.v4';
+const SESSION_KEY = 'fm.session.v4';
+const SCHEMA_VERSION = 4;
 
 /**
  * The tenant id a platform_admin session carries. It can never

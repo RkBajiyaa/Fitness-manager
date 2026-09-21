@@ -9,12 +9,12 @@
    every mutation exercises a real pending state.
    ============================================================ */
 import type {
-  Announcement, AttendanceEvent, BodyMeasurement, DietItem, DietPlan, Difficulty, Exercise,
+  Announcement, AttendanceEvent, BodyMeasurement, Database, DietItem, DietPlan, Difficulty, Exercise,
   ExerciseKind, ExerciseScope, Expense, ExpenseCategory, FitnessProfile, Gender,
   Goal, GoalKind, Gym, ISODate, MealSlot, Member, MemberWorkout, Membership, MembershipPlan,
   MembershipStatus, Message, MessageChannel, MessageKind, Note, OperatingHours, Page, Payment,
-  PaymentMethod, PaymentSettings, Program, ProgramDay, RevenueSource, SessionSet, SetKind,
-  Session, SetupStep, WorkoutSession,
+  PaymentMethod, PaymentSettings, PlanTemplate, Program, ProgramDay, ProgramExercise,
+  RevenueSource, SessionSet, SetKind, Session, SetupStep, WorkoutSession,
 } from './types';
 import {
   audit, commit, entitlementsFor, featuresFor, getDb, hasFeature, memo, newId, NotFound,
@@ -27,12 +27,21 @@ import {
   adherence, attendanceStats, checkInDays, currentMembership, dashboardKpis, dailySeries,
   duesFor, engagementFor, goalProgress, groupBy, lastPerformance, latestMeasurement,
   membershipNet, membershipStatus, monthlySeries, newRecordsIn, outstanding, profitLoss,
-  programDayFor, recordsByExercise, sessionsOn, sessionVolume, statsFromDays, strengthSeries,
+  estimateDayMinutes, lastExercisePerformance, programDayFor, progressionHint,
+  recordsByExercise, sessionsOn,
+  sessionVolume, statsFromDays, strengthSeries,
   streakSummary, summarise, sum, trainingStreak, waterSeries, waterTotal, weeklyConsistency,
   type DashboardKpis, type Engagement, type ExerciseRecord, type GoalProgress,
-  type MemberSummary, type PRAchievement, type Point, type ProfitLoss, type StreakSummary,
+  type MemberSummary, type PRAchievement, type Point, type PreviousPerformance,
+  type ProfitLoss, type ProgressionHint, type StreakSummary,
 } from './derive';
-import { addDays, addMonths, dayOf, monthKey, startOfMonth, todayISO } from './date';
+import { addDays, addMonths, dayOf, diffDays, monthKey, startOfMonth, todayISO } from './date';
+import {
+  difficultyLabel, equipmentLabel, exerciseTypeLabel, muscleGroupLabel, muscleLabel,
+  patternLabel, TAXONOMY,
+} from '../data/taxonomy';
+import { DRAWING_INDEX } from '../data/media/patterns';
+import type { MovementDrawing, PropGlyph, SceneGlyph } from '../data/media/figure';
 import { compose, providerFor, type TemplateContext } from './integrations/messaging';
 
 const WRITE_LATENCY = 140;
@@ -1011,6 +1020,20 @@ export const attendance = {
 export interface ExerciseFilter {
   q?: string; muscleGroup?: string; equipment?: string;
   scope?: ExerciseScope | 'all'; kind?: ExerciseKind | 'all';
+  difficulty?: Difficulty | 'all';
+}
+
+/** A filter chip: the stored key plus the word a human reads. */
+export interface FacetOption {
+  value: string;
+  label: string;
+}
+
+/** Everything the How-To renderer needs, with the defaults already applied. */
+export interface ResolvedHowTo {
+  drawing: MovementDrawing;
+  prop: PropGlyph;
+  scene: SceneGlyph;
 }
 
 export const exercises = {
@@ -1031,13 +1054,19 @@ export const exercises = {
     const q = norm(f.q ?? '');
     if (q) {
       rows = rows.filter((e) =>
-        norm(e.name).includes(q) || norm(e.muscleGroup).includes(q)
-        || norm(e.equipment).includes(q) || e.tags.some((t) => norm(t).includes(q)));
+        norm(e.name).includes(q)
+        // Match the LABEL as well as the key: someone typing "resistance
+        // band" must find the row stored as `band`.
+        || norm(muscleGroupLabel(e.muscleGroup)).includes(q)
+        || norm(equipmentLabel(e.equipment)).includes(q)
+        || norm(e.summary).includes(q)
+        || e.tags.some((t) => norm(t).includes(q)));
     }
     if (f.muscleGroup && f.muscleGroup !== 'all') rows = rows.filter((e) => e.muscleGroup === f.muscleGroup);
     if (f.equipment && f.equipment !== 'all') rows = rows.filter((e) => e.equipment === f.equipment);
     if (f.scope && f.scope !== 'all') rows = rows.filter((e) => e.scope === f.scope);
     if (f.kind && f.kind !== 'all') rows = rows.filter((e) => e.kind === f.kind);
+    if (f.difficulty && f.difficulty !== 'all') rows = rows.filter((e) => e.difficulty === f.difficulty);
     return rows.sort((a, b) => a.name.localeCompare(b.name));
   },
 
@@ -1047,12 +1076,70 @@ export const exercises = {
     return e;
   },
 
-  facets(session: Session) {
+  /**
+   * Filter options for the library screens. Values are taxonomy
+   * KEYS and labels come from the taxonomy, so a filter chip can
+   * never disagree with the row it filters — the bug that used to
+   * happen whenever someone typed 'Dumbbells' into one screen.
+   */
+  facets(session: Session): {
+    muscleGroups: FacetOption[];
+    equipment: FacetOption[];
+    difficulties: FacetOption[];
+    kinds: FacetOption[];
+  } {
     const rows = exercises.visible(session);
+    const distinct = (values: string[], label: (k: string) => string): FacetOption[] =>
+      [...new Set(values)]
+        .map((value) => ({ value, label: label(value) }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+
     return {
-      muscleGroups: [...new Set(rows.map((e) => e.muscleGroup))].sort(),
-      equipment: [...new Set(rows.map((e) => e.equipment))].sort(),
+      muscleGroups: distinct(rows.map((e) => e.muscleGroup), muscleGroupLabel),
+      equipment: distinct(rows.map((e) => e.equipment), equipmentLabel),
+      difficulties: distinct(rows.map((e) => e.difficulty), difficultyLabel),
+      kinds: distinct(rows.map((e) => e.kind), exerciseTypeLabel),
     };
+  },
+
+  /** The full vocabulary, for create forms that must offer every option. */
+  taxonomy() {
+    return TAXONOMY;
+  },
+
+  /**
+   * The resolved How-To for one exercise, or null when there is no
+   * demonstration for it (every member-authored exercise, for a start).
+   *
+   * Screens go through here rather than reaching into `src/data`
+   * themselves: the drawing is CONTENT, and when these rows move to
+   * Postgres this accessor is what changes. The pose ENGINE
+   * (`resolvePose` and friends) is a rendering algorithm and is
+   * imported directly by the renderer — it has no data in it.
+   *
+   * `prop` and `scene` fall back to the drawing's own defaults, which
+   * is how one `press_flat` serves barbell, dumbbell and machine.
+   */
+  howTo(session: Session, exerciseId: string): ResolvedHowTo | null {
+    const exercise = exercises.visible(session).find((e) => e.id === exerciseId);
+    if (!exercise?.media || exercise.media.kind !== 'pose') return null;
+    const drawing = DRAWING_INDEX.get(exercise.media.src);
+    if (!drawing) return null;
+    return {
+      drawing,
+      prop: (exercise.media.prop ?? drawing.prop) as PropGlyph,
+      scene: (exercise.media.scene ?? drawing.scene) as SceneGlyph,
+    };
+  },
+
+  /** Display helpers, re-exported so a screen imports one module. */
+  label: {
+    muscleGroup: muscleGroupLabel,
+    muscle: muscleLabel,
+    equipment: equipmentLabel,
+    difficulty: difficultyLabel,
+    kind: exerciseTypeLabel,
+    pattern: patternLabel,
   },
 
   /**
@@ -1062,6 +1149,10 @@ export const exercises = {
   create(session: Session, input: {
     name: string; muscleGroup: string; equipment: string;
     kind?: ExerciseKind; difficulty?: Difficulty; instructions?: string;
+    pattern?: string; mechanic?: string | null; summary?: string;
+    setup?: string[]; steps?: string[]; breathing?: string;
+    mistakes?: string[]; safety?: string | null;
+    primaryMuscles?: string[]; secondaryMuscles?: string[];
   }) {
     requireFeature(session, 'exercise_library');
     const fields: Record<string, string> = {};
@@ -1078,16 +1169,37 @@ export const exercises = {
 
     return write(() => {
       const kind = input.kind ?? 'strength';
-      const equipment = input.equipment?.trim() || 'Other';
+      const equipment = input.equipment?.trim() || 'none';
+      const steps = (input.steps ?? []).map((x) => x.trim()).filter(Boolean);
+      const instructions = input.instructions?.trim() ?? '';
       const exercise: Exercise = {
         id: newId('ex'), scope, ownerId,
+        // A custom exercise carries no slug: slugs identify PLATFORM
+        // content, and a member naming theirs "bench-press" must never
+        // collide with the catalogue row a plan references.
+        slug: '',
         name: input.name.trim(), muscleGroup: input.muscleGroup.trim(),
-        secondaryMuscles: [], equipment, kind,
+        primaryMuscles: input.primaryMuscles ?? [],
+        secondaryMuscles: input.secondaryMuscles ?? [],
+        equipment, kind,
+        mechanic: input.mechanic ?? null,
+        pattern: input.pattern ?? 'brace',
         difficulty: input.difficulty ?? 'intermediate',
-        instructions: input.instructions?.trim() ?? '',
+        summary: input.summary?.trim() ?? '',
+        instructions: instructions || steps.join(' '),
+        setup: input.setup ?? [],
+        steps: steps.length ? steps : instructions ? [instructions] : [],
+        breathing: input.breathing?.trim() ?? '',
+        mistakes: input.mistakes ?? [],
+        safety: input.safety ?? null,
         tags: ['custom'],
         tracks: kind === 'cardio' ? ['duration', 'distance']
-          : equipment === 'Bodyweight' ? ['reps'] : ['weight', 'reps'],
+          : kind === 'mobility' || kind === 'warmup' ? ['duration']
+            : equipment === 'bodyweight' || equipment === 'none' ? ['reps']
+              : ['weight', 'reps'],
+        // No drawing. The How-To panel says "no demonstration for this
+        // one" rather than borrowing a picture of a different movement.
+        media: null,
       };
       commit((db) => { db.exercises.push(exercise); audit(db, session, 'create', 'Exercise', exercise.id); });
       return exercise;
@@ -1122,6 +1234,27 @@ function isGymMember(session: Session, memberId: string | null): boolean {
 /* ============================================================
    Programs
    ============================================================ */
+
+/** One prescribed exercise with its definition already resolved. */
+export interface PlannedItem {
+  prescribed: ProgramExercise;
+  exercise: Exercise | null;
+}
+
+/** Everything the Today's Workout card needs, in one read. */
+export interface TodayPlan {
+  program: Program;
+  day: ProgramDay | null;
+  progress: PlanProgress | null;
+  warmup: Exercise[];
+  cooldown: Exercise[];
+  strength: PlannedItem[];
+  cardio: PlannedItem[];
+  other: PlannedItem[];
+  /** 0 when we cannot say honestly — the UI then says nothing. */
+  estimatedMin: number;
+}
+
 export const programs = {
   templates(session: Session): Program[] {
     requireFeature(session, 'workout_programs');
@@ -1135,6 +1268,44 @@ export const programs = {
 
   today(session: Session, memberId: string, date: ISODate = todayISO()): ProgramDay | null {
     return programDayFor(programs.forMember(session, memberId), date);
+  },
+
+  /**
+   * Today's day, fully resolved for the screen: the exercises split
+   * into warm-up / strength / cardio / cool-down, the honest minute
+   * estimate, and the member's position in the plan.
+   *
+   * Assembled HERE rather than in the component because it is four
+   * store reads and a grouping — exactly the kind of thing that ends
+   * up subtly different on the Home card and the Workout card if each
+   * screen does its own.
+   */
+  todayPlan(session: Session, memberId: string, date: ISODate = todayISO()): TodayPlan | null {
+    requireOwnership(session, memberId);
+    const program = programs.forMember(session, memberId);
+    const day = programDayFor(program, date);
+    if (!program) return null;
+
+    const resolve = (ids: string[]): Exercise[] =>
+      ids.map((id) => exercises.visible(session).find((e) => e.id === id))
+        .filter((e): e is Exercise => !!e);
+
+    const items = (day?.exercises ?? []).map((pe) => ({
+      prescribed: pe,
+      exercise: exercises.visible(session).find((e) => e.id === pe.exerciseId) ?? null,
+    })).filter((x) => x.exercise);
+
+    return {
+      program,
+      day,
+      progress: planLibrary.progress(program, date),
+      warmup: day ? resolve(day.warmupExerciseIds) : [],
+      cooldown: day ? resolve(day.cooldownExerciseIds) : [],
+      strength: items.filter((x) => x.exercise!.kind === 'strength' || x.exercise!.kind === 'bodyweight'),
+      cardio: items.filter((x) => x.exercise!.kind === 'cardio'),
+      other: items.filter((x) => x.exercise!.kind === 'mobility' || x.exercise!.kind === 'warmup'),
+      estimatedMin: day ? estimateDayMinutes(day) : 0,
+    };
   },
 
   assign(session: Session, memberId: string, templateId: string) {
@@ -1174,7 +1345,7 @@ export const programs = {
 
   /** Members may reorder / retarget their own assigned program day. */
   updateDay(session: Session, dayId: string, patch: {
-    exercises?: Array<{ exerciseId: string; sets: number; reps: number; targetWeightKg: number; restSec: number; notes?: string }>;
+    exercises?: Array<{ exerciseId: string; sets: number; reps: number; repsMax?: number; targetWeightKg: number; restSec: number; notes?: string }>;
     title?: string;
   }) {
     return write(() => {
@@ -1190,7 +1361,8 @@ export const programs = {
         if (patch.exercises) {
           day.exercises = patch.exercises.map((e, i) => ({
             id: newId('pex'), dayId, exerciseId: e.exerciseId, order: i,
-            sets: e.sets, reps: e.reps, targetWeightKg: e.targetWeightKg,
+            sets: e.sets, reps: e.reps, repsMax: e.repsMax ?? 0,
+            targetWeightKg: e.targetWeightKg,
             restSec: e.restSec, notes: e.notes ?? '',
           }));
           day.isRest = day.exercises.length === 0;
@@ -1204,6 +1376,149 @@ export const programs = {
 };
 
 /* ============================================================
+   PLAN CATALOGUE (§5, §21)
+
+   Named `planLibrary`, not `plans` — `plans` is already membership
+   plans, and two things called "plan" in one API is how a
+   ₹8,500/month membership ends up rendered as a training split.
+
+   The catalogue is PLATFORM-OWNED: the same four families for
+   every customer, with no gymId, read through their own accessor
+   rather than `tenant()`. Enrolling CLONES the template into a
+   `Program` that belongs to the member, which is what makes
+   switching plans safe — `WorkoutSession` rows are never touched,
+   so history survives every switch (§4).
+   ============================================================ */
+
+export interface PlanProgress {
+  /** 1-based day of a numbered programme; null for weekly plans. */
+  dayNo: number | null;
+  totalDays: number | null;
+  /** 1-based week, for both schedules. */
+  weekNo: number;
+  /** True once a numbered programme has run past its last day. */
+  finished: boolean;
+}
+
+export const planLibrary = {
+  /** The whole catalogue, in display order. */
+  catalog(session: Session): PlanTemplate[] {
+    requireFeature(session, 'workout_programs');
+    return [...getDb().planTemplates].sort((a, b) => a.order - b.order);
+  },
+
+  get(session: Session, idOrSlug: string): PlanTemplate {
+    requireFeature(session, 'workout_programs');
+    const row = getDb().planTemplates.find((p) => p.id === idOrSlug || p.slug === idOrSlug);
+    if (!row) throw new NotFound('Plan not found.');
+    return row;
+  },
+
+  /** The member's current plan, whoever started it. */
+  current(session: Session, memberId: string): Program | null {
+    return programs.forMember(session, memberId);
+  },
+
+  /**
+   * Where the member is in their plan. Derived from `startedAt`,
+   * never stored — a stored cursor goes wrong the first time
+   * somebody misses a Tuesday (hard rule 5).
+   */
+  progress(program: Program | null, date: ISODate = todayISO()): PlanProgress | null {
+    if (!program || !program.startedAt) return null;
+    const elapsed = Math.max(0, diffDays(program.startedAt, date));
+    if (program.schedule === 'numbered') {
+      const totalDays = program.days.length;
+      return {
+        dayNo: Math.min(elapsed + 1, totalDays),
+        totalDays,
+        weekNo: Math.floor(elapsed / 7) + 1,
+        finished: elapsed + 1 > totalDays,
+      };
+    }
+    return { dayNo: null, totalDays: null, weekNo: Math.floor(elapsed / 7) + 1, finished: false };
+  },
+
+  /**
+   * The member picks their own plan (§4). Replaces whatever they
+   * were on; completed sessions are untouched, which is the whole
+   * reason enrolment clones rather than mutating.
+   */
+  enroll(session: Session, memberId: string, planIdOrSlug: string) {
+    requireOwnership(session, memberId);
+    requireFeature(session, 'workout_programs');
+    return write(() => {
+      let enrolled!: Program;
+      commit((db) => {
+        const tpl = db.planTemplates.find((p) => p.id === planIdOrSlug || p.slug === planIdOrSlug);
+        if (!tpl) throw new NotFound('Plan not found.');
+
+        // One active program per member. The previous one goes; the
+        // sessions trained under it do not.
+        db.programs = db.programs.filter(
+          (p) => !(p.memberId === memberId && p.gymId === session.gymId));
+
+        enrolled = programFromTemplate(tpl, session.gymId, memberId);
+        db.programs.push(enrolled);
+        audit(db, session, 'enroll', 'Program', enrolled.id, { plan: tpl.slug, memberId });
+      });
+      return enrolled;
+    });
+  },
+
+  /** Stop following a plan. Training and history continue as normal. */
+  leave(session: Session, memberId: string) {
+    requireOwnership(session, memberId);
+    return write(() => {
+      commit((db) => {
+        db.programs = db.programs.filter(
+          (p) => !(p.memberId === memberId && p.gymId === session.gymId));
+        audit(db, session, 'leave_plan', 'Program', memberId);
+      });
+    });
+  },
+};
+
+/** Catalogue template → a Program that belongs to one member. */
+function programFromTemplate(tpl: PlanTemplate, gymId: string, memberId: string): Program {
+  const programId = newId('prg');
+  return {
+    id: programId,
+    gymId,
+    name: tpl.name,
+    description: tpl.description,
+    kind: 'standard',
+    schedule: tpl.schedule,
+    templateSlug: tpl.slug,
+    durationWeeks: tpl.durationWeeks,
+    isTemplate: false,
+    memberId,
+    startedAt: todayISO(),
+    createdAt: new Date().toISOString(),
+    days: tpl.days.map((d) => {
+      const dayId = newId('pday');
+      const exercises: ProgramExercise[] = d.exercises.map((e) => ({
+        id: newId('pex'), dayId, exerciseId: e.exerciseId, order: e.order,
+        sets: e.sets, reps: e.reps, repsMax: e.repsMax,
+        targetWeightKg: e.targetWeightKg, restSec: e.restSec, notes: e.notes,
+      }));
+      return {
+        id: dayId, programId,
+        weekNo: d.dayNo > 0 ? Math.floor((d.dayNo - 1) / 7) + 1 : 1,
+        dayIndex: d.dayIndex, dayNo: d.dayNo,
+        title: d.title, focus: d.focus, isRest: d.isRest,
+        warmup: '', cooldown: '',
+        warmupExerciseIds: [...d.warmupExerciseIds],
+        cooldownExerciseIds: [...d.cooldownExerciseIds],
+        estimatedMin: d.estimatedMin,
+        notes: d.notes,
+        exercises,
+      };
+    }),
+  };
+}
+
+/* ============================================================
    Workout sessions — the live training loop
    ============================================================ */
 export interface SessionSummary {
@@ -1213,6 +1528,22 @@ export interface SessionSummary {
   workingSets: number;
   records: PRAchievement[];
   previousVolume: number | null;
+}
+
+/**
+ * A set's kind, with one rule the caller cannot override: a set of
+ * an exercise that IS a warm-up is always a warm-up set.
+ *
+ * Hard rule 11 filters on `SetKind`, so without this a member who
+ * logged "Arm Circles, 15 reps" would have it counted towards volume
+ * — and, at a heavy enough bodyweight, towards a personal record.
+ * Forcing it here, in api.ts, is the same shape as forcing `scope`
+ * on `exercises.create`: the request does not get a vote on a fact
+ * the server already knows.
+ */
+function kindForExercise(db: Database, exerciseId: string, requested: SetKind): SetKind {
+  const exercise = db.exercises.find((e) => e.id === exerciseId);
+  return exercise?.kind === 'warmup' ? 'warmup' : requested;
 }
 
 export const sessions = {
@@ -1290,14 +1621,31 @@ export const sessions = {
             exerciseId: pe.exerciseId, sets: pe.sets, reps: pe.reps, targetWeightKg: pe.targetWeightKg,
           }));
 
-        const sets: SessionSet[] = plan.flatMap((pe, order) =>
-          Array.from({ length: Math.max(1, pe.sets) }, (_, i) => ({
-            id: newId('sst'), sessionId, exerciseId: pe.exerciseId, order,
-            setNo: i + 1, kind: 'normal' as SetKind,
-            reps: pe.reps, weightKg: pe.targetWeightKg,
-            durationSec: 0, distanceKm: 0, rpe: null,
-            completed: false,
-          })));
+        // The day's structured warm-up goes in FIRST and as warm-up
+        // sets, so it is part of the session the member works through
+        // rather than a paragraph they scroll past — and so nothing in
+        // it can ever reach `countableSets()` (hard rule 11).
+        const warmupIds = workout ? [] : (day?.warmupExerciseIds ?? []);
+        const warmupSets: SessionSet[] = warmupIds.map((exerciseId, order) => ({
+          id: newId('sst'), sessionId, exerciseId, order,
+          setNo: 1, kind: 'warmup' as SetKind,
+          reps: 1, weightKg: 0, durationSec: 0, distanceKm: 0, rpe: null,
+          completed: false,
+        }));
+
+        const sets: SessionSet[] = [
+          ...warmupSets,
+          ...plan.flatMap((pe, i) => {
+            const order = warmupSets.length + i;
+            return Array.from({ length: Math.max(1, pe.sets) }, (_, n) => ({
+              id: newId('sst'), sessionId, exerciseId: pe.exerciseId, order,
+              setNo: n + 1, kind: kindForExercise(db, pe.exerciseId, 'normal'),
+              reps: pe.reps, weightKg: pe.targetWeightKg,
+              durationSec: 0, distanceKm: 0, rpe: null,
+              completed: false,
+            }));
+          }),
+        ];
 
         if (workout) workout.lastUsedAt = now;
 
@@ -1315,10 +1663,61 @@ export const sessions = {
     });
   },
 
-  /** Pre-fill: what this member last did on this exercise. */
+  /** Pre-fill: the single best set this member last did on this exercise. */
   lastPerformance(session: Session, memberId: string, exerciseId: string, excludeSessionId?: string) {
     requireOwnership(session, memberId);
     return lastPerformance(sessions.completed(session, memberId), exerciseId, excludeSessionId);
+  },
+
+  /**
+   * The whole of last time — every working set, in order. What the
+   * player shows above the inputs.
+   */
+  previousPerformance(
+    session: Session, memberId: string, exerciseId: string, excludeSessionId?: string,
+  ): PreviousPerformance | null {
+    requireOwnership(session, memberId);
+    return lastExercisePerformance(sessions.completed(session, memberId), exerciseId, excludeSessionId);
+  },
+
+  /**
+   * What the plan asked for on this exercise, in this session.
+   *
+   * `repsMax` lives on `ProgramExercise`, not on `SessionSet` — a set
+   * records what HAPPENED, and the prescribed range is part of the
+   * plan, not part of the history. Adding a `repsMax` column to
+   * SessionSet would freeze the range at the moment the session
+   * started and quietly disagree with the plan the day after it was
+   * edited. So it is resolved back through `programDayId` instead.
+   *
+   * Returns null for a freely-logged session or a member-built
+   * workout, which is correct: nothing prescribed a range, so
+   * nothing can be topped out.
+   */
+  prescription(
+    session: Session, sessionId: string, exerciseId: string,
+  ): { reps: number; repsMax: number; targetWeightKg: number } | null {
+    const row = tenant(getDb().sessions, session).find((s) => s.id === sessionId);
+    if (!row) return null;
+    requireOwnership(session, row.memberId);
+    if (!row.programDayId) return null;
+    const program = tenant(getDb().programs, session)
+      .find((p) => p.memberId === row.memberId && p.days.some((d) => d.id === row.programDayId));
+    const day = program?.days.find((d) => d.id === row.programDayId);
+    const item = day?.exercises.find((e) => e.exerciseId === exerciseId);
+    if (!item) return null;
+    return { reps: item.reps, repsMax: item.repsMax, targetWeightKg: item.targetWeightKg };
+  },
+
+  /**
+   * A progression nudge, or null. Pure — the caller already holds the
+   * prescription, so this does not go back to the store for it.
+   */
+  progression(
+    prescribed: { reps: number; repsMax: number; targetWeightKg: number },
+    previous: PreviousPerformance | null,
+  ): ProgressionHint | null {
+    return progressionHint(prescribed, previous);
   },
 
   addSet(session: Session, sessionId: string, input: {
@@ -1340,7 +1739,7 @@ export const sessions = {
         created = {
           id: newId('sst'), sessionId, exerciseId: input.exerciseId, order,
           setNo: sameExercise.filter((s) => s.kind !== 'warmup').length + 1,
-          kind: input.kind ?? 'normal',
+          kind: kindForExercise(db, input.exerciseId, input.kind ?? 'normal'),
           reps: Math.max(0, input.reps ?? 0),
           weightKg: Math.max(0, input.weightKg ?? 0),
           durationSec: Math.max(0, input.durationSec ?? 0),
@@ -1367,7 +1766,7 @@ export const sessions = {
         if (patch.weightKg != null) set.weightKg = Math.max(0, patch.weightKg);
         if (patch.durationSec != null) set.durationSec = Math.max(0, patch.durationSec);
         if (patch.distanceKm != null) set.distanceKm = Math.max(0, patch.distanceKm);
-        if (patch.kind != null) set.kind = patch.kind;
+        if (patch.kind != null) set.kind = kindForExercise(db, set.exerciseId, patch.kind);
         if (patch.rpe !== undefined) set.rpe = patch.rpe;
         if (patch.completed != null) set.completed = patch.completed;
       });
@@ -1393,9 +1792,10 @@ export const sessions = {
         if (session.role === 'member' && row.memberId !== session.memberId) throw new NotFound('Session not found.');
         if (row.sets.some((s) => s.exerciseId === exerciseId)) return;
         const order = row.sets.reduce((m, s) => Math.max(m, s.order), -1) + 1;
+        const kind = kindForExercise(db, exerciseId, 'normal');
         for (let i = 0; i < Math.max(1, plan.sets); i++) {
           row.sets.push({
-            id: newId('sst'), sessionId, exerciseId, order, setNo: i + 1, kind: 'normal',
+            id: newId('sst'), sessionId, exerciseId, order, setNo: i + 1, kind,
             reps: plan.reps, weightKg: plan.weightKg, durationSec: 0, distanceKm: 0,
             rpe: null, completed: false,
           });
@@ -1486,7 +1886,7 @@ export const sessions = {
           row.sets.push({
             id: newId('sst'), sessionId: row.id, exerciseId: s.exerciseId,
             order: baseOrder + i, setNo: row.sets.filter((x) => x.exerciseId === s.exerciseId).length + 1,
-            kind: 'normal', reps: s.reps, weightKg: s.weightKg,
+            kind: kindForExercise(db, s.exerciseId, 'normal'), reps: s.reps, weightKg: s.weightKg,
             durationSec: s.durationSec ?? 0, distanceKm: s.distanceKm ?? 0,
             rpe: null, completed: true,
           });

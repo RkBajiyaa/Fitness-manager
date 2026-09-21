@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Badge, Button, Card, CardBody, CardHead, EmptyState, Meter, Segmented, StatTile,
+  Badge, Button, Card, CardBody, CardHead, EmptyState, Segmented, StatTile,
 } from '../../components/ui/primitives';
 import { Icon } from '../../components/ui/Icon';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
+import type { ISODate, WorkoutSession } from '../../lib/types';
 import { sessionVolume } from '../../lib/derive';
 import { count, dateShort, relativeDay } from '../../lib/format';
 import { addDays, parseISO, todayISO } from '../../lib/date';
 import { formatClock } from './SessionPlayer';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
 
 export default function Workout() {
   const { session, has } = useApp();
@@ -21,7 +24,8 @@ export default function Workout() {
   const memberId = session?.memberId ?? '';
 
   const program = useData(() => (session && memberId ? api.programs.forMember(session, memberId) : null), [memberId]);
-  const day = useData(() => (session && memberId ? api.programs.today(session, memberId) : null), [memberId]);
+  const todayPlan = useData(
+    () => (session && memberId ? api.programs.todayPlan(session, memberId) : null), [memberId]);
   const history = useData(() => (session && memberId ? api.sessions.completed(session, memberId) : []), [memberId]);
   const streaks = useData(() => (session && memberId ? api.streaks.forMember(session, memberId) : null), [memberId]);
   const mine = useData(() => {
@@ -33,9 +37,6 @@ export default function Workout() {
 
   const todaySession = history.find((s) => s.date === today) ?? null;
   const dow = parseISO(today).getDay();
-  const planned = day?.exercises ?? [];
-  const doneIds = new Set(todaySession?.sets.map((s) => s.exerciseId) ?? []);
-  const doneCount = planned.filter((e) => doneIds.has(e.exerciseId)).length;
   const last7 = history.filter((s) => s.date >= addDays(today, -6));
   const volume30 = history
     .filter((s) => s.date >= addDays(today, -29))
@@ -43,12 +44,12 @@ export default function Workout() {
 
   return (
     <div className="anim-page u-col u-gap-4">
-      <div className="u-between">
-        <div>
-          <h1 className="t-h1">Workout</h1>
-          <p className="t-sm t-muted u-mt-2">{program ? program.name : 'No program assigned'}</p>
-        </div>
-        <Button variant="primary" icon="play" onClick={() => nav('/member/session')}>Start</Button>
+      {/* No Start button here on purpose: Today's card carries the one
+          primary action, and two "Start"s on one screen is a choice the
+          member should never have to make. */}
+      <div>
+        <h1 className="t-h1">Workout</h1>
+        <p className="t-sm t-muted u-mt-2">{program ? program.name : 'No plan yet'}</p>
       </div>
 
       <Segmented
@@ -122,119 +123,13 @@ export default function Workout() {
       )}
 
       {view === 'today' && (
-        <>
-          {day?.isRest ? (
-            <Card>
-              <CardBody>
-                <div className="u-row u-gap-3">
-                  <span style={{
-                    width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center',
-                    borderRadius: 'var(--r-md)', background: 'var(--surface-3)', color: 'var(--text-2)',
-                  }}>
-                    <Icon name="moon" size={19} />
-                  </span>
-                  <div>
-                    <div className="t-h3">{day.title}</div>
-                    <p className="t-sm t-muted u-mt-2">
-                      {day.notes || 'Recovery is part of the plan. Move gently, eat well, sleep.'}
-                    </p>
-                  </div>
-                </div>
-                {day.exercises.length > 0 && (
-                  <ul className="u-col u-gap-2 u-mt-5">
-                    {day.exercises.map((x) => (
-                      <li key={x.id} className="u-row u-gap-3 t-sm">
-                        <Icon name="check" size={14} className="t-faint" />
-                        <span className="u-grow">{api.exercises.name(x.exerciseId)}</span>
-                        <span className="t-xs t-faint">{x.notes}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <Button className="u-mt-5" block icon="dumbbell" onClick={() => nav('/member/session')}>
-                  Train anyway
-                </Button>
-              </CardBody>
-            </Card>
-          ) : planned.length > 0 ? (
-            <Card>
-              <CardHead
-                title={day?.title ?? DAYS[dow]}
-                subtitle={day?.focus}
-                action={<Badge tone={doneCount === planned.length ? 'good' : 'neutral'}>
-                  {doneCount}/{planned.length}
-                </Badge>}
-              />
-              <CardBody flush>
-                <div style={{ padding: 'var(--s-3) var(--s-4) 0' }}>
-                  <Meter value={doneCount} max={planned.length}
-                    tone={doneCount === planned.length ? 'good' : undefined}
-                    label={`${doneCount} of ${planned.length} exercises complete`} />
-                </div>
-                <ul className="u-mt-3">
-                  {planned.map((x, i) => {
-                    const done = doneIds.has(x.exerciseId);
-                    const logged = todaySession?.sets.filter(
-                      (s) => s.exerciseId === x.exerciseId && s.kind !== 'warmup') ?? [];
-                    return (
-                      <li key={x.id} className={`exline ${done ? 'exline--done' : ''}`} style={{ alignItems: 'flex-start' }}>
-                        <span className="exline__idx" style={{ marginTop: 2 }}>
-                          {done ? <Icon name="check" size={12} strokeWidth={2.6} /> : i + 1}
-                        </span>
-                        <span className="u-grow" style={{ minWidth: 0 }}>
-                          <span className="exline__name" style={{ display: 'block' }}>
-                            {api.exercises.name(x.exerciseId)}
-                          </span>
-                          <span className="exline__target">
-                            target {x.sets} × {x.reps}{x.targetWeightKg ? ` · ${x.targetWeightKg} kg` : ''}
-                            {x.restSec ? ` · rest ${x.restSec}s` : ''}
-                          </span>
-                          {logged.length > 0 && (
-                            <span className="t-xs" style={{ display: 'block', marginTop: 3, color: 'var(--good)' }}>
-                              {logged.map((s) => `${s.reps}×${s.weightKg || 'BW'}`).join(' · ')}
-                            </span>
-                          )}
-                          {x.notes && (
-                            <span className="t-xs t-faint" style={{ display: 'block', marginTop: 3 }}>{x.notes}</span>
-                          )}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-                <div style={{ padding: 'var(--s-4)' }}>
-                  <Button variant="primary" size="lg" block icon="play" onClick={() => nav('/member/session')}>
-                    {todaySession ? 'Log more' : 'Start workout'}
-                  </Button>
-                </div>
-              </CardBody>
-            </Card>
-          ) : (
-            <Card>
-              <EmptyState
-                icon="dumbbell"
-                title={program ? 'Nothing scheduled today' : 'No program assigned yet'}
-                message={program
-                  ? 'Your plan has no session for today. You can still train and log it.'
-                  : 'Ask your coach to assign a program. In the meantime, log whatever you train — it all counts.'}
-                action={<Button variant="primary" icon="play" onClick={() => nav('/member/session')}>Start a workout</Button>}
-              />
-            </Card>
-          )}
-
-          {day?.warmup && (
-            <Card>
-              <CardHead title="Warm-up" />
-              <CardBody><p className="t-sm t-muted">{day.warmup}</p></CardBody>
-            </Card>
-          )}
-          {day?.cooldown && (
-            <Card>
-              <CardHead title="Cool-down" />
-              <CardBody><p className="t-sm t-muted">{day.cooldown}</p></CardBody>
-            </Card>
-          )}
-        </>
+        <TodayView
+          today={today}
+          plan={todayPlan}
+          todaySession={todaySession}
+          onStart={() => nav('/member/session')}
+          onChangePlan={() => nav('/member/plans')}
+        />
       )}
 
       {view === 'program' && (
@@ -361,5 +256,243 @@ export default function Workout() {
         </div>
       )}
     </div>
+  );
+}
+
+/* ============================================================
+   TODAY'S WORKOUT (§3)
+
+   One card that answers, in reading order: what day is it, what am
+   I doing, how big is it, what plan am I on, and where is the
+   button. Everything else on this screen is secondary to that
+   button — including changing plans, which sits in the plan strip
+   as a quiet text action rather than competing for the same
+   attention (§4).
+   ============================================================ */
+function TodayView({
+  today, plan, todaySession, onStart, onChangePlan,
+}: {
+  today: ISODate;
+  plan: api.TodayPlan | null;
+  todaySession: WorkoutSession | null;
+  onStart: () => void;
+  onChangePlan: () => void;
+}) {
+  const date = parseISO(today);
+  const dayName = DAYS[date.getDay()];
+  const dateLabel = `${dayName} · ${date.getDate()} ${MONTHS[date.getMonth()]}`;
+
+  const day = plan?.day ?? null;
+  const exerciseCount = (plan?.strength.length ?? 0) + (plan?.cardio.length ?? 0) + (plan?.other.length ?? 0);
+  const doneIds = new Set(todaySession?.sets.filter((s) => s.completed).map((s) => s.exerciseId) ?? []);
+
+  /* ---- no plan at all ---- */
+  if (!plan) {
+    return (
+      <div className="u-col u-gap-4">
+        <Card>
+          <EmptyState
+            icon="route"
+            title="No plan yet"
+            message="Pick a training plan and your workout is scheduled for you every day — or just start and log whatever you train."
+            action={(
+              <div className="u-row u-gap-2 u-wrap" style={{ justifyContent: 'center' }}>
+                <Button variant="primary" icon="route" onClick={onChangePlan}>Choose a plan</Button>
+                <Button icon="play" onClick={onStart}>Start a workout</Button>
+              </div>
+            )}
+          />
+        </Card>
+      </div>
+    );
+  }
+
+  const planProgress = plan.progress?.dayNo != null
+    ? `Day ${plan.progress.dayNo} of ${plan.progress.totalDays}`
+    : plan.progress
+      ? `Week ${plan.progress.weekNo}`
+      : null;
+
+  const isRest = day?.isRest ?? false;
+  const nothingToday = !day;
+
+  return (
+    <div className="u-col u-gap-4">
+      <div className="today">
+        <div className="today__head">
+          <div className="today__date">{dateLabel}</div>
+          <h2 className="today__title">
+            {nothingToday ? 'Nothing scheduled' : day!.title}
+          </h2>
+          {day?.focus && <p className="today__focus">{day.focus}</p>}
+          {nothingToday && (
+            <p className="today__focus">
+              Your plan has no session for today. You can still train and log it.
+            </p>
+          )}
+
+          {!nothingToday && !isRest && (
+            <div className="today__meta">
+              {exerciseCount > 0 && (
+                <span className="today__metaitem">
+                  <Icon name="dumbbell" size={14} />
+                  {exerciseCount} {exerciseCount === 1 ? 'exercise' : 'exercises'}
+                </span>
+              )}
+              {plan.estimatedMin > 0 && (
+                <span className="today__metaitem">
+                  <Icon name="clock" size={14} />
+                  about {plan.estimatedMin} min
+                </span>
+              )}
+              {plan.warmup.length > 0 && (
+                <span className="today__metaitem">
+                  <Icon name="flame" size={14} />
+                  {plan.warmup.length}-move warm-up
+                </span>
+              )}
+            </div>
+          )}
+
+          {isRest && day?.notes && <p className="t-sm t-muted u-mt-4">{day.notes}</p>}
+        </div>
+
+        <div className="today__plan">
+          <div style={{ minWidth: 0 }}>
+            <div className="today__planname u-truncate">{plan.program.name}</div>
+            {planProgress && <div className="today__planprog">{planProgress}</div>}
+          </div>
+          <Button size="sm" variant="ghost" onClick={onChangePlan}>Change plan</Button>
+        </div>
+
+        <div className="today__cta">
+          <Button variant="primary" size="lg" block icon="play" onClick={onStart}>
+            {todaySession ? 'Continue workout' : isRest ? 'Train anyway' : 'Start workout'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Sections. Each one is only rendered when it has something in
+          it — an empty "Cardio" heading is worse than no heading. */}
+      {plan.warmup.length > 0 && (
+        <Card>
+          <DaySection label="Warm-up" count={plan.warmup.length} />
+          <CardBody flush>
+            <ul>
+              {plan.warmup.map((ex, i) => (
+                <li key={ex.id} className={`exline ${doneIds.has(ex.id) ? 'exline--done' : ''}`}>
+                  <span className="exline__idx exacc__idx--warmup">
+                    {doneIds.has(ex.id) ? <Icon name="check" size={12} strokeWidth={2.6} /> : i + 1}
+                  </span>
+                  <span className="u-grow" style={{ minWidth: 0 }}>
+                    <span className="exline__name" style={{ display: 'block' }}>{ex.name}</span>
+                    <span className="exline__target">{ex.summary}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
+
+      {plan.strength.length > 0 && (
+        <Card>
+          <DaySection label="Strength" count={plan.strength.length} />
+          <CardBody flush>
+            <PlannedList items={plan.strength} doneIds={doneIds} session={todaySession} />
+          </CardBody>
+        </Card>
+      )}
+
+      {plan.cardio.length > 0 && (
+        <Card>
+          <DaySection label="Cardio" count={plan.cardio.length} />
+          <CardBody flush>
+            <PlannedList items={plan.cardio} doneIds={doneIds} session={todaySession} />
+          </CardBody>
+        </Card>
+      )}
+
+      {plan.other.length > 0 && (
+        <Card>
+          <DaySection label="Mobility" count={plan.other.length} />
+          <CardBody flush>
+            <PlannedList items={plan.other} doneIds={doneIds} session={todaySession} />
+          </CardBody>
+        </Card>
+      )}
+
+      {plan.cooldown.length > 0 && (
+        <Card>
+          <DaySection label="Cool-down" count={plan.cooldown.length} />
+          <CardBody flush>
+            <ul>
+              {plan.cooldown.map((ex) => (
+                <li key={ex.id} className="exline">
+                  <span className="exline__idx"><Icon name="moon" size={12} /></span>
+                  <span className="u-grow" style={{ minWidth: 0 }}>
+                    <span className="exline__name" style={{ display: 'block' }}>{ex.name}</span>
+                    <span className="exline__target">{ex.summary}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function DaySection({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="daysec">
+      <span className="daysec__label">{label}</span>
+      <span className="daysec__rule" />
+      <span className="daysec__count">{count}</span>
+    </div>
+  );
+}
+
+function PlannedList({
+  items, doneIds, session,
+}: {
+  items: api.PlannedItem[];
+  doneIds: Set<string>;
+  session: WorkoutSession | null;
+}) {
+  return (
+    <ul>
+      {items.map((item, i) => {
+        const ex = item.exercise!;
+        const p = item.prescribed;
+        const done = doneIds.has(ex.id);
+        const logged = session?.sets.filter(
+          (s) => s.exerciseId === ex.id && s.completed && s.kind !== 'warmup') ?? [];
+        const reps = p.repsMax > p.reps ? `${p.reps}–${p.repsMax}` : String(p.reps);
+        return (
+          <li key={p.id} className={`exline ${done ? 'exline--done' : ''}`} style={{ alignItems: 'flex-start' }}>
+            <span className="exline__idx" style={{ marginTop: 2 }}>
+              {done ? <Icon name="check" size={12} strokeWidth={2.6} /> : i + 1}
+            </span>
+            <span className="u-grow" style={{ minWidth: 0 }}>
+              <span className="exline__name" style={{ display: 'block' }}>{ex.name}</span>
+              <span className="exline__target">
+                {p.sets} × {reps}{p.targetWeightKg ? ` · ${p.targetWeightKg} kg` : ''}
+                {p.restSec ? ` · rest ${p.restSec}s` : ''}
+              </span>
+              {logged.length > 0 && (
+                <span className="t-xs" style={{ display: 'block', marginTop: 3, color: 'var(--good)' }}>
+                  {logged.map((s) => (s.weightKg ? `${s.weightKg}×${s.reps}` : `${s.reps} reps`)).join(' · ')}
+                </span>
+              )}
+              {p.notes && (
+                <span className="t-xs t-faint" style={{ display: 'block', marginTop: 3 }}>{p.notes}</span>
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

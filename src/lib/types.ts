@@ -115,6 +115,13 @@ export interface FitnessProfile {
   waterTargetMl: number;
   weeklySessionTarget: number;
   notes: string;
+  /**
+   * How-To demonstrations during a workout (§13). Defaults to ON for
+   * everyone; once a member turns it off we remember that and never
+   * ask again. Optional so a profile written before this existed
+   * still reads as "on" rather than as "explicitly disabled".
+   */
+  showHowTo?: boolean;
 }
 
 export interface Member {
@@ -202,30 +209,107 @@ export interface AttendanceEvent {
    Exercises — one definition, three scopes (§D.2).
    A member's custom exercise can never mutate the gym library.
    ------------------------------------------------------------ */
-export type ExerciseKind = 'strength' | 'cardio' | 'bodyweight' | 'mobility';
+/**
+ * `warmup` is a first-class kind, not a tag. A warm-up must be a
+ * structured, reusable, illustrated exercise rather than a line of
+ * prose on a program day — see data/warmups.ts. It is a SEPARATE
+ * question from `SetKind === 'warmup'`, which classifies one SET of
+ * any exercise; both exist because both are real.
+ */
+export type ExerciseKind = 'strength' | 'cardio' | 'bodyweight' | 'mobility' | 'warmup';
 export type ExerciseScope = 'global' | 'gym' | 'member';
 export type Difficulty = 'beginner' | 'intermediate' | 'advanced';
 export type TrackedField = 'weight' | 'reps' | 'duration' | 'distance';
+
+/**
+ * Where a piece of media came from and what we are allowed to do
+ * with it. Mandatory on every external asset — an unlicensed clip
+ * gets shipped exactly once, by someone who meant to fill this in
+ * later.
+ */
+export interface MediaProvenance {
+  source: string;
+  creator: string;
+  /** SPDX identifier, a vendor licence name, or 'proprietary-owned'. */
+  license: string;
+  commercialUse: boolean;
+  attributionRequired: boolean;
+  modificationAllowed: boolean;
+  verifiedOn: ISODate;
+  url: string;
+}
+
+/**
+ * The How-To demonstration, behind one abstraction so the UI never
+ * branches on format. `pose` is our own drawing system; the other
+ * kinds exist so a licensed asset can be dropped in later without
+ * touching a single screen.
+ */
+export interface ExerciseMedia {
+  kind: 'pose' | 'lottie' | 'gif' | 'video' | 'image';
+  /** A drawing key for `pose`; a URL or asset path for everything else. */
+  src: string;
+  /** Still frame shown before an animation loads. */
+  poster: string | null;
+  /** Implement in the hands, overriding the drawing's default. */
+  prop: string | null;
+  /** Scenery behind the figure, overriding the drawing's default. */
+  scene: string | null;
+  version: number;
+  provenance: MediaProvenance;
+}
 
 export interface Exercise {
   id: string;
   scope: ExerciseScope;
   ownerId: string | null;        // null (global) | gymId | memberId
+  /** Stable content key for global rows. '' for gym and member rows. */
+  slug: string;
   name: string;
+  /** A taxonomy key (data/taxonomy.ts), never a display string. */
   muscleGroup: string;
+  primaryMuscles: string[];
   secondaryMuscles: string[];
+  /** A taxonomy key. Render through `equipmentLabel()`. */
   equipment: string;
   kind: ExerciseKind;
+  /** 'compound' | 'isolation', or null where the distinction is meaningless. */
+  mechanic: string | null;
+  /** A movement-pattern key. Drives the How-To drawing and future grouping. */
+  pattern: string;
   difficulty: Difficulty;
+  /** One sentence for the library card. */
+  summary: string;
+  /**
+   * Kept as the single free-text field so anything written before the
+   * structured fields existed — and any member-authored exercise —
+   * still has somewhere to live.
+   */
   instructions: string;
+  setup: string[];
+  steps: string[];
+  breathing: string;
+  mistakes: string[];
+  /** Only where there is a real risk. A warning on everything is a warning on nothing. */
+  safety: string | null;
   tags: string[];
   tracks: TrackedField[];
+  media: ExerciseMedia | null;
 }
 
 /* ------------------------------------------------------------
    Programs: Program → Week → Day → Exercise
    ------------------------------------------------------------ */
 export type ProgramKind = 'onboarding' | 'standard';
+
+/**
+ * `weekly` repeats the same seven days forever — the member trains
+ * "Monday: Push". `numbered` runs day 1 to day N once and the member
+ * sees "Day 7 of 30". Which day is current is DERIVED from
+ * `Program.startedAt` in both cases; storing a cursor would drift
+ * the first time somebody misses a day.
+ */
+export type ProgramSchedule = 'weekly' | 'numbered';
 
 export interface ProgramExercise {
   id: string;
@@ -234,6 +318,12 @@ export interface ProgramExercise {
   order: number;
   sets: number;
   reps: number;
+  /**
+   * Upper bound of a prescribed rep range, when the plan gives one.
+   * 0 means "no range" — it is what the progression hint reads to
+   * decide whether the member has topped out (§18).
+   */
+  repsMax: number;
   targetWeightKg: number;
   restSec: number;
   notes: string;
@@ -243,12 +333,24 @@ export interface ProgramDay {
   id: string;
   programId: string;
   weekNo: number;                // 1-based
-  dayIndex: number;              // 0 = Sunday
+  dayIndex: number;              // 0 = Sunday. Used by `weekly` schedules.
+  /** 1-based day of the programme. Used by `numbered` schedules; 0 otherwise. */
+  dayNo: number;
   title: string;
   focus: string;
   isRest: boolean;
+  /**
+   * Legacy free-text warm-up and cool-down. Still rendered when the
+   * structured lists are empty, so programmes written before
+   * data/warmups.ts existed keep working.
+   */
   warmup: string;
   cooldown: string;
+  /** Structured warm-up (§6). Exercise ids, resolved like any other. */
+  warmupExerciseIds: string[];
+  cooldownExerciseIds: string[];
+  /** Honest estimate in minutes, or 0 when we cannot say. */
+  estimatedMin: number;
   notes: string;
   exercises: ProgramExercise[];
 }
@@ -259,12 +361,73 @@ export interface Program {
   name: string;
   description: string;
   kind: ProgramKind;
+  schedule: ProgramSchedule;
+  /** The PlanTemplate this was built from, when it came from the catalogue. */
+  templateSlug: string | null;
   durationWeeks: number;
   isTemplate: boolean;
   memberId: string | null;       // null ⇒ reusable template
   startedAt: ISODate | null;
   createdAt: ISODateTime;
   days: ProgramDay[];
+}
+
+/* ------------------------------------------------------------
+   Plan catalogue (§5, §21)
+
+   PLATFORM-OWNED, like the global exercise library: no gymId, and
+   the same content for every customer. A member enrolling clones a
+   template into a `Program` of their own — which is what keeps
+   switching plans from touching history. Sessions belong to the
+   member, not to the plan, so leaving PPL for a body-part split
+   deletes nothing.
+
+   Days reference exercises by ID, never by copying them (§20).
+   ------------------------------------------------------------ */
+
+export type PlanFamily = 'ppl' | 'body_part_split' | 'beginner' | 'cardio' | 'hybrid';
+
+export interface PlanTemplateExercise {
+  exerciseId: string;
+  order: number;
+  sets: number;
+  reps: number;
+  repsMax: number;
+  targetWeightKg: number;
+  restSec: number;
+  notes: string;
+}
+
+export interface PlanTemplateDay {
+  id: string;
+  dayIndex: number;
+  dayNo: number;
+  title: string;
+  focus: string;
+  isRest: boolean;
+  warmupExerciseIds: string[];
+  cooldownExerciseIds: string[];
+  estimatedMin: number;
+  notes: string;
+  exercises: PlanTemplateExercise[];
+}
+
+export interface PlanTemplate {
+  id: string;
+  slug: string;
+  name: string;
+  family: PlanFamily;
+  schedule: ProgramSchedule;
+  summary: string;
+  description: string;
+  difficulty: Difficulty;
+  daysPerWeek: number;
+  durationWeeks: number;
+  highlights: string[];
+  equipmentNeeded: string[];
+  /** Ordering in the catalogue. Lower first. */
+  order: number;
+  days: PlanTemplateDay[];
 }
 
 /* ------------------------------------------------------------
@@ -611,6 +774,7 @@ export interface Database {
   overrides: FeatureOverride[];
   platformAudit: PlatformAuditLog[];
   platformUpdates: PlatformUpdate[];
+  planTemplates: PlanTemplate[];
   settings: PlatformSettings;
   /* ---- tenant-owned ---- */
   gyms: Gym[];

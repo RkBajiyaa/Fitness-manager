@@ -280,9 +280,9 @@ function ExercisePicker({ onPick, onClose }: {
               All
             </button>
             {facets.muscleGroups.map((m) => (
-              <button key={m} className={`togglechip ${muscle === m ? 'togglechip--on' : ''}`}
-                onClick={() => setMuscle(m)} aria-pressed={muscle === m}>
-                {m}
+              <button key={m.value} className={`togglechip ${muscle === m.value ? 'togglechip--on' : ''}`}
+                onClick={() => setMuscle(m.value)} aria-pressed={muscle === m.value}>
+                {m.label}
               </button>
             ))}
           </div>
@@ -307,10 +307,10 @@ function ExercisePicker({ onPick, onClose }: {
                       {e.scope === 'gym' && <span className="tag tag--quiet">Gym</span>}
                     </span>
                     <span className="t-xs t-faint" style={{ display: 'block', marginTop: 2 }}>
-                      {e.muscleGroup} · {e.equipment}
+                      {api.exercises.label.muscleGroup(e.muscleGroup)} · {api.exercises.label.equipment(e.equipment)}
                     </span>
                   </span>
-                  <Badge>{e.difficulty}</Badge>
+                  <Badge>{api.exercises.label.difficulty(e.difficulty)}</Badge>
                 </button>
               </li>
             ))}

@@ -13,11 +13,16 @@
 import type {
   Database, DietPlan, Exercise, ExpenseCategory, FeaturePackage, FitnessProfile,
   Gym, GymSetup, ISODate, Member, Membership, MembershipPlan, OperatingHours,
-  PaymentMethod, PaymentSettings, PlatformFeature, PlatformSettings, Program,
-  ProgramDay, ProgramExercise, SessionSet, Subscription, WorkoutSession,
+  PaymentMethod, PaymentSettings, PlanTemplate, PlanTemplateDay, PlanTemplateExercise,
+  PlatformFeature, PlatformSettings, Program, ProgramDay, ProgramExercise,
+  SessionSet, Subscription, TrackedField, WorkoutSession,
 } from './types';
 import { FEATURE_CATALOG } from './platform/catalog';
 import { DEFAULT_PACKAGE_KEY, PACKAGE_SEEDS } from './platform/packages';
+import {
+  ALL_EXERCISES, PLAN_TEMPLATES, validateContent,
+  type ExerciseContent, type PlanTemplateContent,
+} from '../data';
 import { addDays, addMonths, dayOf, diffDays, monthKey, rangeDays, todayISO, toISO, parseISO, startOfMonth } from './date';
 
 /* ---- deterministic PRNG ---- */
@@ -49,68 +54,120 @@ const EXPERIENCE = ['beginner', 'intermediate', 'advanced'] as const;
 
 /* ============================================================
    Exercise library
+
+   The CONTENT lives in src/data (§29); this turns it into stored
+   rows. Two things are settled here rather than in the content
+   files, because both are consequences of the domain rather than
+   of the exercise:
+
+     · `tracks` — what the session player asks for. Derived from
+       the exercise type and equipment so a cardio row can never
+       be authored as though it took a weight.
+     · `instructions` — the legacy single-string field, composed
+       from the structured steps so anything still reading it
+       (a member's own exercise, the owner's library screen) keeps
+       working while the richer fields land.
    ============================================================ */
-type ExDef = [name: string, muscle: string, secondary: string[], equipment: string, kind: Exercise['kind'], difficulty: Exercise['difficulty'], instructions: string, tags: string[]];
-
-const GLOBAL_EXERCISES: ExDef[] = [
-  ['Barbell Bench Press', 'Chest', ['Triceps', 'Shoulders'], 'Barbell', 'strength', 'intermediate', 'Retract the shoulder blades, lower to mid-chest under control, press without flaring the elbows.', ['push', 'compound']],
-  ['Incline Dumbbell Press', 'Chest', ['Shoulders', 'Triceps'], 'Dumbbell', 'strength', 'beginner', 'Bench at 30°. Press up and slightly together without locking harshly.', ['push', 'compound']],
-  ['Cable Fly', 'Chest', ['Shoulders'], 'Cable', 'strength', 'beginner', 'Soft elbows throughout. Squeeze at the midline, resist on the way back.', ['push', 'isolation']],
-  ['Dumbbell Pullover', 'Chest', ['Back'], 'Dumbbell', 'strength', 'intermediate', 'Keep the ribs down; move only at the shoulder.', ['push', 'isolation']],
-  ['Overhead Press', 'Shoulders', ['Triceps', 'Core'], 'Barbell', 'strength', 'intermediate', 'Brace the midsection, press in a straight line, finish with the bar over the ears.', ['push', 'compound']],
-  ['Dumbbell Shoulder Press', 'Shoulders', ['Triceps'], 'Dumbbell', 'strength', 'beginner', 'Seated with back support. Press without shrugging.', ['push', 'compound']],
-  ['Lateral Raise', 'Shoulders', [], 'Dumbbell', 'strength', 'beginner', 'Light weight, lead with the elbows, stop at shoulder height.', ['push', 'isolation']],
-  ['Face Pull', 'Shoulders', ['Back'], 'Cable', 'strength', 'beginner', 'Pull to the forehead, externally rotate at the end.', ['pull', 'isolation']],
-  ['Lat Pulldown', 'Back', ['Biceps'], 'Cable', 'strength', 'beginner', 'Drive the elbows down and back; avoid leaning too far.', ['pull', 'compound']],
-  ['Barbell Row', 'Back', ['Biceps', 'Hamstrings'], 'Barbell', 'strength', 'intermediate', 'Hinge to roughly 45°, pull to the lower ribs, keep a neutral spine.', ['pull', 'compound']],
-  ['Seated Cable Row', 'Back', ['Biceps'], 'Cable', 'strength', 'beginner', 'Chest tall, pull to the navel, control the return.', ['pull', 'compound']],
-  ['Deadlift', 'Back', ['Hamstrings', 'Glutes', 'Core'], 'Barbell', 'strength', 'advanced', 'Brace hard before the pull. Stop the set if the back rounds.', ['pull', 'compound']],
-  ['Pull-ups', 'Back', ['Biceps', 'Core'], 'Bodyweight', 'bodyweight', 'intermediate', 'Full hang to chin over the bar. Use assistance if needed.', ['pull', 'compound']],
-  ['Chest Supported Row', 'Back', ['Biceps'], 'Machine', 'strength', 'beginner', 'Removes the lower back from the equation. Squeeze at the top.', ['pull', 'compound']],
-  ['Back Squat', 'Legs', ['Glutes', 'Core'], 'Barbell', 'strength', 'advanced', 'Depth to at least parallel, knees tracking over the toes.', ['legs', 'compound']],
-  ['Front Squat', 'Legs', ['Core'], 'Barbell', 'strength', 'advanced', 'Elbows high, torso upright.', ['legs', 'compound']],
-  ['Leg Press', 'Legs', ['Glutes'], 'Machine', 'strength', 'beginner', 'Do not let the lower back round at the bottom.', ['legs', 'compound']],
-  ['Romanian Deadlift', 'Legs', ['Hamstrings', 'Glutes'], 'Barbell', 'strength', 'intermediate', 'Push the hips back, feel the hamstrings, stop before the back rounds.', ['legs', 'compound']],
-  ['Leg Curl', 'Legs', ['Hamstrings'], 'Machine', 'strength', 'beginner', 'Control the eccentric; do not swing.', ['legs', 'isolation']],
-  ['Leg Extension', 'Legs', [], 'Machine', 'strength', 'beginner', 'Pause briefly at the top.', ['legs', 'isolation']],
-  ['Walking Lunge', 'Legs', ['Glutes'], 'Dumbbell', 'strength', 'intermediate', 'Long step, torso tall, knee tracking straight.', ['legs', 'compound']],
-  ['Bulgarian Split Squat', 'Legs', ['Glutes'], 'Dumbbell', 'strength', 'advanced', 'Rear foot elevated. Weight through the front heel.', ['legs', 'compound']],
-  ['Hip Thrust', 'Glutes', ['Hamstrings'], 'Barbell', 'strength', 'intermediate', 'Ribs down, chin tucked, full lockout at the top.', ['legs', 'compound']],
-  ['Calf Raise', 'Legs', [], 'Machine', 'strength', 'beginner', 'Full stretch at the bottom, pause at the top.', ['legs', 'isolation']],
-  ['Barbell Curl', 'Arms', ['Biceps'], 'Barbell', 'strength', 'beginner', 'Elbows pinned to the sides.', ['pull', 'isolation']],
-  ['Hammer Curl', 'Arms', ['Biceps', 'Forearms'], 'Dumbbell', 'strength', 'beginner', 'Neutral grip throughout.', ['pull', 'isolation']],
-  ['Triceps Pushdown', 'Arms', ['Triceps'], 'Cable', 'strength', 'beginner', 'Upper arms still; extend fully.', ['push', 'isolation']],
-  ['Overhead Triceps Extension', 'Arms', ['Triceps'], 'Dumbbell', 'strength', 'beginner', 'Keep the elbows narrow.', ['push', 'isolation']],
-  ['Push-ups', 'Chest', ['Triceps', 'Core'], 'Bodyweight', 'bodyweight', 'beginner', 'Straight line from head to heels.', ['push', 'compound']],
-  ['Dips', 'Chest', ['Triceps'], 'Bodyweight', 'bodyweight', 'intermediate', 'Lean forward slightly for chest emphasis.', ['push', 'compound']],
-  ['Bodyweight Squat', 'Legs', ['Glutes'], 'Bodyweight', 'bodyweight', 'beginner', 'Controlled tempo, full range.', ['legs', 'compound']],
-  ['Plank', 'Core', ['Shoulders'], 'Bodyweight', 'bodyweight', 'beginner', 'Ribs down, glutes tight. Quality over duration.', ['core']],
-  ['Hanging Leg Raise', 'Core', [], 'Bodyweight', 'bodyweight', 'advanced', 'Control the descent; avoid swinging.', ['core']],
-  ['Cable Woodchop', 'Core', ['Shoulders'], 'Cable', 'strength', 'intermediate', 'Rotate from the trunk, not the arms.', ['core']],
-  ['Treadmill Run', 'Cardio', [], 'Machine', 'cardio', 'beginner', 'Steady conversational pace unless intervals are prescribed.', ['cardio']],
-  ['Assault Bike', 'Cardio', [], 'Machine', 'cardio', 'intermediate', 'Drive with the legs; keep the cadence honest.', ['cardio', 'conditioning']],
-  ['Rowing Machine', 'Cardio', ['Back'], 'Machine', 'cardio', 'beginner', 'Legs, then hips, then arms. Reverse on the return.', ['cardio', 'conditioning']],
-  ['Incline Walk', 'Cardio', [], 'Machine', 'cardio', 'beginner', 'Low impact steady-state work.', ['cardio']],
-  ['Jump Rope', 'Cardio', ['Calves'], 'Other', 'cardio', 'intermediate', 'Stay on the balls of the feet.', ['cardio', 'conditioning']],
-  ['Hip Flexor Stretch', 'Mobility', [], 'Bodyweight', 'mobility', 'beginner', 'Squeeze the glute of the trailing leg. Hold 45 seconds per side.', ['mobility', 'recovery']],
-  ['Thoracic Rotation', 'Mobility', ['Back'], 'Bodyweight', 'mobility', 'beginner', 'Slow, controlled rotations. Breathe out at end range.', ['mobility', 'recovery']],
-  ['Foam Roll — Quads', 'Mobility', ['Legs'], 'Other', 'mobility', 'beginner', 'Slow passes; pause on tight spots.', ['mobility', 'recovery']],
-];
-
-function tracksFor(kind: Exercise['kind'], equipment: string): Exercise['tracks'] {
-  if (kind === 'cardio') return ['duration', 'distance'];
-  if (kind === 'mobility') return ['duration'];
-  if (equipment === 'Bodyweight') return ['reps'];
+function tracksFor(type: ExerciseContent['type'], equipment: string): TrackedField[] {
+  if (type === 'cardio') return ['duration', 'distance'];
+  if (type === 'mobility' || type === 'warmup') return ['duration'];
+  if (equipment === 'bodyweight' || equipment === 'none') return ['reps'];
   return ['weight', 'reps'];
 }
 
-function buildExercises(): Exercise[] {
-  return GLOBAL_EXERCISES.map(([name, muscleGroup, secondaryMuscles, equipment, kind, difficulty, instructions, tags]) => ({
+/** The `ExerciseKind` a content row maps to. Warm-ups keep their own kind. */
+function kindFor(type: ExerciseContent['type']): Exercise['kind'] {
+  return type;
+}
+
+function toExerciseRow(content: ExerciseContent): Exercise {
+  return {
     id: id('ex'),
-    scope: 'global' as const,
+    scope: 'global',
     ownerId: null,
-    name, muscleGroup, secondaryMuscles, equipment, kind, difficulty, instructions, tags,
-    tracks: tracksFor(kind, equipment),
+    slug: content.slug,
+    name: content.name,
+    muscleGroup: content.muscleGroup,
+    primaryMuscles: [...content.primaryMuscles],
+    secondaryMuscles: [...content.secondaryMuscles],
+    equipment: content.equipment,
+    kind: kindFor(content.type),
+    mechanic: content.mechanic,
+    pattern: content.pattern,
+    difficulty: content.difficulty,
+    summary: content.summary,
+    instructions: content.steps.join(' '),
+    setup: [...content.setup],
+    steps: [...content.steps],
+    breathing: content.breathing,
+    mistakes: [...content.mistakes],
+    safety: content.safety,
+    tags: [...content.tags],
+    tracks: tracksFor(content.type, content.equipment),
+    media: content.media,
+  };
+}
+
+function buildExercises(): Exercise[] {
+  return ALL_EXERCISES.map(toExerciseRow);
+}
+
+/* ============================================================
+   Plan catalogue
+
+   Content slugs become row ids exactly once, here. A plan day that
+   names an exercise we do not ship is a content bug that must fail
+   at the seam rather than render as a blank line in a gym — so the
+   lookup throws instead of skipping.
+   ============================================================ */
+function buildPlanTemplates(exercises: Exercise[]): PlanTemplate[] {
+  const bySlug = new Map(exercises.map((e) => [e.slug, e.id]));
+  const resolve = (slug: string, where: string): string => {
+    const found = bySlug.get(slug);
+    if (!found) throw new Error(`[seed] ${where} references unknown exercise "${slug}"`);
+    return found;
+  };
+
+  return PLAN_TEMPLATES.map((plan: PlanTemplateContent, order): PlanTemplate => ({
+    id: id('plan'),
+    slug: plan.slug,
+    name: plan.name,
+    family: plan.family,
+    schedule: plan.schedule,
+    summary: plan.summary,
+    description: plan.description,
+    difficulty: plan.difficulty,
+    daysPerWeek: plan.daysPerWeek,
+    durationWeeks: plan.durationWeeks,
+    highlights: [...plan.highlights],
+    equipmentNeeded: [...plan.equipmentNeeded],
+    order,
+    days: plan.days.map((day): PlanTemplateDay => {
+      const where = `${plan.slug}/${day.title}`;
+      const exercises: PlanTemplateExercise[] = (day.exercises ?? []).map((item, i) => ({
+        exerciseId: resolve(item.slug, where),
+        order: i,
+        sets: item.sets,
+        reps: item.reps,
+        repsMax: item.repsMax ?? 0,
+        targetWeightKg: item.targetWeightKg ?? 0,
+        restSec: item.restSec,
+        notes: item.notes ?? '',
+      }));
+      return {
+        id: id('ptd'),
+        dayIndex: day.dayIndex ?? -1,
+        dayNo: day.dayNo ?? 0,
+        title: day.title,
+        focus: day.focus,
+        isRest: Boolean(day.isRest),
+        warmupExerciseIds: (day.warmup ?? []).map((slug) => resolve(slug, `${where} warm-up`)),
+        cooldownExerciseIds: (day.cooldown ?? []).map((slug) => resolve(slug, `${where} cool-down`)),
+        estimatedMin: day.estimatedMin ?? 0,
+        notes: day.notes ?? '',
+        exercises,
+      };
+    }),
   }));
 }
 
@@ -401,19 +458,22 @@ function buildProgram(
       if (!ex) return [];
       return [{
         id: id('pex'), dayId, exerciseId: ex.id, order: i,
-        sets: row[1], reps: row[2], targetWeightKg: row[3], restSec: row[4],
+        sets: row[1], reps: row[2], repsMax: 0, targetWeightKg: row[3], restSec: row[4],
         notes: row[5] ?? '',
       }];
     });
     return {
-      id: dayId, programId, weekNo: 1, dayIndex: t.dayIndex,
+      id: dayId, programId, weekNo: 1, dayIndex: t.dayIndex, dayNo: 0,
       title: t.title, focus: t.focus, isRest: Boolean(t.isRest),
-      warmup: t.warmup ?? '', cooldown: t.cooldown ?? '', notes: t.notes ?? '',
+      warmup: t.warmup ?? '', cooldown: t.cooldown ?? '',
+      warmupExerciseIds: [], cooldownExerciseIds: [], estimatedMin: 0,
+      notes: t.notes ?? '',
       exercises: items,
     };
   });
   return {
     id: programId, gymId, name, description, kind,
+    schedule: 'weekly', templateSlug: null,
     durationWeeks: 1, isTemplate: true, memberId: null, startedAt: null,
     createdAt: new Date().toISOString(), days,
   };
@@ -931,12 +991,19 @@ function seedTraining(
 
   /* A member's own custom exercise — scoped to them, never the gym library. */
   db.exercises.push({
-    id: id('ex'), scope: 'member', ownerId: demo.id,
-    name: 'Landmine Press (single arm)', muscleGroup: 'Shoulders',
-    secondaryMuscles: ['Chest', 'Core'], equipment: 'Barbell', kind: 'strength',
-    difficulty: 'intermediate',
+    id: id('ex'), scope: 'member', ownerId: demo.id, slug: '',
+    name: 'Landmine Press (single arm)', muscleGroup: 'shoulders',
+    primaryMuscles: ['front_delts'], secondaryMuscles: ['pectorals', 'abs'],
+    equipment: 'barbell', kind: 'strength', mechanic: 'compound',
+    pattern: 'vertical_push', difficulty: 'intermediate',
+    summary: 'A shoulder-friendly pressing angle.',
     instructions: 'Shoulder-friendly pressing angle. Keep the ribs down and press across the body.',
+    setup: [], steps: ['Keep the ribs down and press up and across the body.'],
+    breathing: '', mistakes: [], safety: null,
     tags: ['push', 'custom'], tracks: ['weight', 'reps'],
+    // A member-authored exercise has no drawing. The How-To panel says so
+    // rather than borrowing a picture of a different movement.
+    media: null,
   });
 }
 
@@ -1081,10 +1148,11 @@ function platformSettings(): PlatformSettings {
 function emptyDatabase(): Database {
   const now = new Date().toISOString();
   return {
-    version: 3,
+    version: 4,
     features: platformFeatures(),
     packages: platformPackages(now),
     subscriptions: [], overrides: [], platformAudit: [], platformUpdates: [],
+    planTemplates: [],
     settings: platformSettings(),
     gyms: [], users: [], members: [], plans: [], memberships: [], payments: [],
     attendance: [], exercises: [], programs: [], sessions: [], measurements: [], goals: [],
@@ -1103,7 +1171,20 @@ function emptyDatabase(): Database {
  */
 export function buildPlatform(): Database {
   const db = emptyDatabase();
+
+  // Content is validated on the way in, not on the way out. A bad
+  // slug or an unknown muscle group is cheap to fix here and very
+  // expensive to notice once it is a blank row on a member's phone.
+  const problems = validateContent();
+  if (problems.length) {
+    throw new Error(
+      `[seed] exercise content failed validation:\n`
+      + problems.map((p) => `  · ${p.where}: ${p.problem}`).join('\n'),
+    );
+  }
+
   db.exercises = buildExercises();
+  db.planTemplates = buildPlanTemplates(db.exercises);
 
   db.users.push({
     id: 'user_platform_admin', gymId: null, role: 'platform_admin',
@@ -1145,6 +1226,7 @@ export function buildDemoWorkspace(db: Database): void {
   const today = todayISO();
 
   if (!db.exercises.length) db.exercises = buildExercises();
+  if (!db.planTemplates.length) db.planTemplates = buildPlanTemplates(db.exercises);
 
   buildGym(makeGym('Atlas Performance Club', 'atlas', 'Indiranagar', 38), db,
     { memberCount: 52, attendanceDays: 63, rich: true }, today);

@@ -38,6 +38,7 @@ const OwnerSetup     = lazy(() => import('./pages/owner/Setup'));
 const MemberHome       = lazy(() => import('./pages/member/Home'));
 const MemberWorkout    = lazy(() => import('./pages/member/Workout'));
 const MemberWorkouts   = lazy(() => import('./pages/member/Workouts'));
+const MemberPlans      = lazy(() => import('./pages/member/Plans'));
 const WorkoutBuilder   = lazy(() => import('./pages/member/WorkoutBuilder'));
 const SessionPlayer    = lazy(() => import('./pages/member/SessionPlayer'));
 const ExerciseLibrary  = lazy(() => import('./pages/member/ExerciseLibrary'));
@@ -346,6 +347,7 @@ export default function App() {
           <Route path="/member" element={<RequireRole role="member"><MemberLayout /></RequireRole>}>
             <Route index element={<MemberEntry />} />
             <Route path="workout" element={<Owned feature="workout_logging"><MemberWorkout /></Owned>} />
+            <Route path="plans" element={<Owned feature="workout_programs"><MemberPlans /></Owned>} />
             <Route path="workouts" element={<Owned feature="workout_builder"><MemberWorkouts /></Owned>} />
             <Route path="workouts/new" element={<Owned feature="workout_builder"><WorkoutBuilder /></Owned>} />
             <Route path="workouts/:id" element={<Owned feature="workout_builder"><WorkoutBuilder /></Owned>} />

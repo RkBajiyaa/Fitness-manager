@@ -37,15 +37,36 @@ function safe<T>(fn: () => T, fallback: T): T {
 }
 
 export default function MemberProfilePage() {
-  const { session, theme, toggleTheme, signOut, confirm, has } = useApp();
+  const { session, theme, toggleTheme, signOut, confirm, has, toast } = useApp();
   const nav = useNavigate();
   const memberId = session?.memberId ?? '';
   const [tab, setTab] = useState<Tab>('personal');
   const [editing, setEditing] = useState(false);
   const [addingGoal, setAddingGoal] = useState(false);
+  const [savingHowTo, setSavingHowTo] = useState(false);
 
   const me = useData(() => (session && memberId ? api.members.get(session, memberId) : null), [memberId]);
   const gym = useData(() => (session ? api.gyms.current(session) : null), [session?.gymId]);
+
+  /**
+   * How-To defaults ON (§13): `undefined` means the member has never
+   * expressed a preference, which is not the same as "off". Only an
+   * explicit `false` turns it off, and once set we never ask again.
+   */
+  const howToOn = me?.member.fitness.showHowTo !== false;
+  const toggleHowTo = async () => {
+    if (!session || !memberId) return;
+    setSavingHowTo(true);
+    try {
+      await api.members.updateFitness(session, memberId, { showHowTo: !howToOn });
+      toast('success', howToOn ? 'How-To turned off' : 'How-To turned on',
+        howToOn ? 'Workouts will show sets and reps only.' : 'Demonstrations will show while you train.');
+    } catch {
+      toast('error', 'Could not save that preference');
+    } finally {
+      setSavingHowTo(false);
+    }
+  };
   const latest = useData(
     () => (session && memberId ? safe(() => api.measurements.latest(session, memberId), null) : null),
     [memberId],
@@ -320,6 +341,26 @@ export default function MemberProfilePage() {
               </KV>
               <KV k="Sessions a week">{f.weeklySessionTarget}</KV>
               <KV k="Water target">{(f.waterTargetMl / 1000).toFixed(1)} L</KV>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHead title="During a workout" />
+            <CardBody>
+              <div className="u-between u-gap-3">
+                <div style={{ minWidth: 0 }}>
+                  <span className="t-sm">How-To demonstrations</span>
+                  <p className="t-xs t-muted u-mt-2">
+                    {howToOn
+                      ? 'A short animation of each exercise shows while you train.'
+                      : 'Turned off. Your workouts show sets and reps only.'}
+                  </p>
+                </div>
+                <Button size="sm" icon={howToOn ? 'eyeOff' : 'eye'} loading={savingHowTo}
+                  onClick={toggleHowTo}>
+                  {howToOn ? 'Turn off' : 'Turn on'}
+                </Button>
+              </div>
             </CardBody>
           </Card>
 
