@@ -86,8 +86,24 @@ export default function Diet() {
   };
 
   const glasses = Math.max(8, Math.ceil(target / 250));
-  const eatenCals = plan ? plan.items.filter((i) => done.has(i.id)).reduce((s, i) => s + i.calories, 0) : 0;
-  const totalCals = plan ? plan.items.reduce((s, i) => s + i.calories, 0) : 0;
+
+  /*
+   * Eaten versus planned, for every number on this screen.
+   *
+   * The card used to show eaten calories next to PLANNED macros —
+   * "1,240 / 2,100 kcal" beside "160 g protein" — so the two halves
+   * of the same card were answering different questions and the
+   * protein figure never moved no matter what you ticked. Both
+   * sides are derived from the same tick list now.
+   */
+  const totals = (keys: readonly DietItem[]) => ({
+    calories: keys.reduce((n, i) => n + i.calories, 0),
+    protein: keys.reduce((n, i) => n + i.protein, 0),
+    carbs: keys.reduce((n, i) => n + i.carbs, 0),
+    fat: keys.reduce((n, i) => n + i.fat, 0),
+  });
+  const planned = totals(plan?.items ?? []);
+  const eaten = totals((plan?.items ?? []).filter((i) => done.has(i.id)));
 
   return (
     <div className="anim-page u-col u-gap-4">
@@ -187,19 +203,27 @@ export default function Diet() {
           <Card>
             <CardBody>
               <div className="u-between u-mb-3">
-                <span className="t-sm t-muted">Today's intake</span>
+                <span className="t-sm t-muted">Eaten today</span>
                 <span className="t-sm u-num" style={{ fontWeight: 620 }}>
-                  {eatenCals}
-                  <span className="t-faint"> / {totalCals} kcal</span>
+                  {eaten.calories}
+                  <span className="t-faint"> / {planned.calories} kcal</span>
                 </span>
               </div>
-              <Meter value={eatenCals} max={Math.max(1, totalCals)} label="Calories eaten today" />
-              <div className="u-row u-gap-2 u-wrap u-mt-4">
-                <Badge tone="brand">{plan.items.reduce((s, i) => s + i.protein, 0)} g protein</Badge>
-                <Badge>{plan.items.reduce((s, i) => s + i.carbs, 0)} g carbs</Badge>
-                <Badge>{plan.items.reduce((s, i) => s + i.fat, 0)} g fat</Badge>
-                {!editable && <Badge>Assigned by your coach</Badge>}
+              <Meter value={eaten.calories} max={Math.max(1, planned.calories)}
+                label="Calories eaten today" />
+
+              {/* Protein first: it is the number that actually changes
+                  what a training member should eat next, and burying it
+                  third in a row of identical chips said otherwise. */}
+              <div className="macrorow u-mt-5">
+                <Macro label="Protein" eaten={eaten.protein} planned={planned.protein} tone="brand" />
+                <Macro label="Carbs" eaten={eaten.carbs} planned={planned.carbs} />
+                <Macro label="Fat" eaten={eaten.fat} planned={planned.fat} />
               </div>
+
+              {!editable && (
+                <p className="quiet-note u-mt-4">Targets set by your coach.</p>
+              )}
             </CardBody>
           </Card>
 
@@ -208,14 +232,14 @@ export default function Diet() {
               .filter((i) => i.meal === meal)
               .sort((a, b) => a.order - b.order);
             if (!items.length && !editable) return null;
-            const eaten = items.filter((i) => done.has(i.id)).length;
+            const eatenCount = items.filter((i) => done.has(i.id)).length;
             return (
               <Card key={meal}>
                 <CardHead
                   title={titleCase(meal)}
                   subtitle={`${MEAL_TIME[meal]}${items.length ? ` · ${items.reduce((s, i) => s + i.calories, 0)} kcal` : ''}`}
                   action={items.length
-                    ? <Badge tone={eaten === items.length ? 'good' : 'neutral'}>{eaten}/{items.length}</Badge>
+                    ? <Badge tone={eatenCount === items.length ? 'good' : 'neutral'}>{eatenCount}/{items.length}</Badge>
                     : undefined}
                 />
                 <CardBody flush>
@@ -278,13 +302,7 @@ export default function Diet() {
                     </ul>
                   )}
 
-                  {editable && (
-                    <div style={{ padding: 'var(--s-3) var(--s-4)' }}>
-                      <Button size="sm" icon="plus" block onClick={() => setAddingTo(meal)}>
-                        Add to {meal}
-                      </Button>
-                    </div>
-                  )}
+                  {editable && <QuickAdd meal={meal} onDetailed={() => setAddingTo(meal)} />}
                 </CardBody>
               </Card>
             );
@@ -314,6 +332,81 @@ export default function Diet() {
           onClose={() => { setAddingTo(null); setEditing(null); }}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * One macro, eaten against planned.
+ *
+ * A bare gram count cannot be read as progress — "112 g protein" is
+ * only meaningful next to what it was aiming at, and the bar says
+ * that faster than the numbers do.
+ */
+function Macro({ label, eaten, planned, tone }: {
+  label: string; eaten: number; planned: number; tone?: 'brand';
+}) {
+  return (
+    <div className="macro">
+      <div className="u-between">
+        <span className="macro__label">{label}</span>
+        <span className="macro__value u-num">
+          {eaten}<span className="t-faint">/{planned} g</span>
+        </span>
+      </div>
+      <Meter value={eaten} max={Math.max(1, planned)} tone={tone === 'brand' ? 'good' : undefined}
+        label={`${label}: ${eaten} of ${planned} grams`} />
+    </div>
+  );
+}
+
+/**
+ * Adding a food, without a modal.
+ *
+ * Two fields and a button, inline in the meal it belongs to. The
+ * dialog is still there for the times somebody wants macros and a
+ * quantity — but "chicken and rice, 620" is the overwhelmingly common
+ * case and it should not cost a sheet, a meal picker and a dismiss.
+ */
+function QuickAdd({ meal, onDetailed }: { meal: MealSlot; onDetailed: () => void }) {
+  const { session, toast } = useApp();
+  const memberId = session?.memberId ?? '';
+  const [text, setText] = useState('');
+  const [kcal, setKcal] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!session || !memberId || !text.trim()) return;
+    setBusy(true);
+    try {
+      await api.diet.addItem(session, memberId, {
+        meal, item: text, calories: Number(kcal.replace(/[^\d]/g, '')) || 0,
+      });
+      setText(''); setKcal('');
+      toast('success', 'Added', `${titleCase(meal)} updated.`);
+    } catch (e) {
+      toast('error', 'Could not add that', errorMessage(e));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="quickadd">
+      <input
+        className="quickadd__name" value={text} placeholder={`Add to ${meal}`}
+        aria-label={`Add a food to ${meal}`}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); }}
+      />
+      <input
+        className="quickadd__kcal" value={kcal} placeholder="kcal" inputMode="numeric"
+        aria-label={`Calories for the food you are adding to ${meal}`}
+        onChange={(e) => setKcal(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') void submit(); }}
+      />
+      <Button size="sm" variant="primary" icon="plus" loading={busy}
+        disabled={!text.trim()} onClick={submit} aria-label={`Add to ${meal}`} />
+      <Button size="sm" variant="ghost" icon="more" onClick={onDetailed}
+        aria-label={`Add to ${meal} with quantity and macros`} />
     </div>
   );
 }

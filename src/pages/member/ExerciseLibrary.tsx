@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import {
-  Badge, Button, Card, EmptyState, Modal, Segmented,
+  Button, Card, EmptyState, Modal, Segmented,
 } from '../../components/ui/primitives';
 import {
   SearchInput, SelectField, TextField, TextareaField, fieldErrors, errorMessage,
 } from '../../components/ui/forms';
-import { Icon } from '../../components/ui/Icon';
+import { ExerciseThumb } from '../../components/member/ExerciseThumb';
+import { ExerciseTeaching } from '../../components/member/ExerciseTeaching';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
 import type { Exercise, ExerciseKind } from '../../lib/types';
-import { titleCase } from '../../lib/format';
 
 type Scope = 'all' | 'library' | 'mine';
 
@@ -92,29 +92,16 @@ export default function ExerciseLibrary() {
           />
         </Card>
       ) : (
-        <div className="exgrid">
-          {rows.map((e) => (
-            <button key={e.id} className="excard" onClick={() => setDetail(e)}>
-              <div className="u-between u-gap-2">
-                <span className="excard__name">{e.name}</span>
-                {e.scope === 'member' && <span className="tag tag--custom">Mine</span>}
-              </div>
-              <span className="excard__meta">
-                  {api.exercises.label.muscleGroup(e.muscleGroup)} · {api.exercises.label.equipment(e.equipment)}
-                </span>
-              <span className="excard__tags">
-                <span className="tag">{api.exercises.label.kind(e.kind)}</span>
-                <span className="tag">{titleCase(e.difficulty)}</span>
-              </span>
-            </button>
-          ))}
+        <div className="exgrid exgrid--visual">
+          {rows.map((e) => <ExerciseCard key={e.id} exercise={e} onOpen={() => setDetail(e)} />)}
         </div>
       )}
 
       {creating && <CreateExercise onClose={() => setCreating(false)} />}
 
       {detail && (
-        <Modal title={detail.name} subtitle={`${api.exercises.label.muscleGroup(detail.muscleGroup)} · ${api.exercises.label.equipment(detail.equipment)}`}
+        <Modal title={detail.name}
+          subtitle={`${api.exercises.label.muscleGroup(detail.muscleGroup)} · ${api.exercises.label.equipment(detail.equipment)}`}
           onClose={() => setDetail(null)}
           footer={
             <>
@@ -126,37 +113,53 @@ export default function ExerciseLibrary() {
               <Button variant="primary" onClick={() => setDetail(null)}>Close</Button>
             </>
           }>
-          <div className="u-col u-gap-4">
-            <div className="u-row u-gap-2 u-wrap">
-              <Badge>{titleCase(detail.kind)}</Badge>
-              <Badge>{titleCase(detail.difficulty)}</Badge>
-              {detail.scope === 'member' && <Badge tone="brand">Your exercise</Badge>}
-              {detail.tags.map((t) => <Badge key={t}>{t}</Badge>)}
-            </div>
-            {detail.instructions && (
-              <div>
-                <h3 className="t-label u-mb-2">How to do it</h3>
-                <p className="t-sm t-muted" style={{ lineHeight: 1.65 }}>{detail.instructions}</p>
-              </div>
-            )}
-            {detail.secondaryMuscles.length > 0 && (
-              <div className="kv">
-                <span className="kv__k">Also works</span>
-                <span className="kv__v">{detail.secondaryMuscles.join(', ')}</span>
-              </div>
-            )}
-            <div className="kv">
-              <span className="kv__k">Tracks</span>
-              <span className="kv__v">{detail.tracks.map(titleCase).join(' · ')}</span>
-            </div>
-            <p className="quiet-note">
-              <Icon name="info" size={12} /> Video demonstrations are a planned addition.
-            </p>
-          </div>
+          <ExerciseDetail exercise={detail} />
         </Modal>
       )}
     </div>
   );
+}
+
+/**
+ * A library row.
+ *
+ * The thumbnail is a STILL frame, never an animation: a grid of
+ * sixty exercises must not start sixty timers (§27), and a still of
+ * the working phase already answers "which movement is this?" —
+ * which is the question a name alone cannot answer for somebody who
+ * has never done it.
+ */
+function ExerciseCard({ exercise, onOpen }: { exercise: Exercise; onOpen: () => void }) {
+  const primary = exercise.primaryMuscles.slice(0, 2).map(api.exercises.label.muscle);
+  return (
+    <button className="excard excard--visual" onClick={onOpen}>
+      <ExerciseThumb exerciseId={exercise.id} name={exercise.name} size="lg" />
+      <span className="excard__text">
+        <span className="u-between u-gap-2">
+          <span className="excard__name">{exercise.name}</span>
+          {exercise.scope === 'member' && <span className="tag tag--custom">Mine</span>}
+        </span>
+        <span className="excard__meta">
+          {api.exercises.label.equipment(exercise.equipment)}
+          {primary.length > 0 && ` · ${primary.join(', ')}`}
+        </span>
+        <span className="excard__tags">
+          <span className="tag">{api.exercises.label.difficulty(exercise.difficulty)}</span>
+          <span className="tag">{api.exercises.label.kind(exercise.kind)}</span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+/** The teaching sheet, with the drawing resolved for this exercise. */
+function ExerciseDetail({ exercise }: { exercise: Exercise }) {
+  const { session } = useApp();
+  const howTo = useData(
+    () => (session ? api.exercises.howTo(session, exercise.id) : null),
+    [exercise.id],
+  );
+  return <ExerciseTeaching exercise={exercise} howTo={howTo} labels={api.exercises.label} />;
 }
 
 function CreateExercise({ onClose }: { onClose: () => void }) {

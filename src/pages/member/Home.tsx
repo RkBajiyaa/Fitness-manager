@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Button, Card, CardBody, CardHead } from '../../components/ui/primitives';
 import { Icon } from '../../components/ui/Icon';
 import { Ring } from '../../components/ui/Ring';
+import { ExerciseThumb } from '../../components/member/ExerciseThumb';
 import { RecordWeightSheet } from './RecordWeight';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
@@ -37,6 +38,24 @@ export default function MemberHome() {
     () => (session && memberId ? safe(() => api.workouts.list(session, memberId), []) : []),
     [memberId],
   );
+  /*
+   * Today's nutrition, from the same two rows the Diet screen reads.
+   * Derived here rather than stored: a cached "calories today" is a
+   * number that goes stale the moment a meal is un-ticked.
+   */
+  const nutrition = useData(() => {
+    if (!session || !memberId) return null;
+    return safe(() => {
+      const bundle = api.diet.forMember(session, memberId);
+      const plan = bundle.assigned ?? bundle.personal;
+      if (!plan) return null;
+      const ticked = api.diet.completions(session, memberId, today);
+      return {
+        eaten: plan.items.filter((i) => ticked.has(i.id)).reduce((n, i) => n + i.calories, 0),
+        planned: plan.items.reduce((n, i) => n + i.calories, 0),
+      };
+    }, null);
+  }, [memberId]);
 
   if (!session || !me || !streaks) return null;
 
@@ -174,6 +193,7 @@ export default function MemberHome() {
               return (
                 <li key={x.id} className={`exline ${done ? 'exline--done' : ''}`}>
                   <span className="exline__idx">{done ? <Icon name="check" size={12} strokeWidth={2.6} /> : i + 1}</span>
+                  <ExerciseThumb exerciseId={x.exerciseId} name={api.exercises.name(x.exerciseId)} size="sm" />
                   <span className="u-grow" style={{ minWidth: 0 }}>
                     <span className="exline__name u-truncate" style={{ display: 'block' }}>
                       {api.exercises.name(x.exerciseId)}
@@ -239,6 +259,26 @@ export default function MemberHome() {
             <span className="ringcell__label">Water</span>
             <span className="ringcell__value">{(target / 1000).toFixed(1)} L target</span>
           </div>
+          )}
+
+          {has('diet_plans') && nutrition && nutrition.planned > 0 && (
+            <button className="ringcell" onClick={() => nav('/member/diet')}>
+              {/* Same shape as the hydration ring on purpose: progress
+                  inside, the target underneath. Two adjacent rings that
+                  read differently is two things to learn, not one. */}
+              <Ring value={nutrition.eaten} max={nutrition.planned} size={58} color="var(--series-2)"
+                label={`Nutrition ${Math.round((nutrition.eaten / nutrition.planned) * 100)} percent of today's plan`}>
+                <span className="t-xs u-num" style={{ fontWeight: 640 }}>
+                  {nutrition.eaten >= 1000
+                    ? `${(nutrition.eaten / 1000).toFixed(1)}k`
+                    : nutrition.eaten}
+                </span>
+              </Ring>
+              <span className="ringcell__label">Food</span>
+              <span className="ringcell__value">
+                {nutrition.planned.toLocaleString('en-IN')} kcal target
+              </span>
+            </button>
           )}
 
           {has('body_measurements') && (

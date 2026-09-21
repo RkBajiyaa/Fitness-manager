@@ -34,6 +34,16 @@ export interface ExerciseContent {
   difficulty: DifficultyKey;
   /** One sentence for the library card. */
   summary: string;
+  /**
+   * THE one thing to get right. Shown next to the demonstration,
+   * on its own, in the player.
+   *
+   * Separate from `steps` because it answers a different question:
+   * steps are the order of operations, focus is what a beginner
+   * will get wrong if nobody tells them. A member mid-set reads one
+   * line or none, and this is the line worth spending it on (§12).
+   */
+  focus: string;
   /** How to get into position. */
   setup: string[];
   /** The movement itself, in order. */

@@ -26,6 +26,9 @@ import { Button, EmptyState, Modal } from '../../components/ui/primitives';
 import { SearchInput } from '../../components/ui/forms';
 import { Icon } from '../../components/ui/Icon';
 import { HowTo } from '../../components/member/HowTo';
+import { ExerciseThumb } from '../../components/member/ExerciseThumb';
+import { MuscleMap } from '../../components/member/MuscleMap';
+import { ExerciseTeaching } from '../../components/member/ExerciseTeaching';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
 import type { Exercise, SessionSet, WorkoutSession } from '../../lib/types';
@@ -56,7 +59,20 @@ export default function SessionPlayer() {
   /** Suppress the frame timer while a number is being edited. */
   const [editing, setEditing] = useState(false);
 
+  // `undefined` means nobody has expressed a preference, which is not
+  // the same as "off" (§13). Only an explicit false turns it off.
   const showHowTo = me?.member.fitness.showHowTo !== false;
+
+  const toggleHowTo = useCallback(async () => {
+    if (!session || !memberId) return;
+    try {
+      await api.members.updateFitness(session, memberId, { showHowTo: !showHowTo });
+      toast('info', showHowTo ? 'Demonstrations hidden' : 'Demonstrations shown',
+        showHowTo ? 'Sets and reps only. Turn them back on any time.' : '');
+    } catch (e) {
+      toast('error', 'Could not save that preference', errorMessage(e));
+    }
+  }, [session, memberId, showHowTo, toast]);
 
   /* ---- elapsed clock ---- */
   useEffect(() => {
@@ -143,6 +159,8 @@ export default function SessionPlayer() {
   const progressPct = workingSets.length ? (completed.length / workingSets.length) * 100 : 0;
 
   const currentIndex = groups.findIndex((g) => g.exerciseId === currentId);
+  const workingGroups = groups.filter((g) => !g.sets.every((x) => x.kind === 'warmup'));
+  const currentWorkingNo = displayNumbers.get(currentId ?? '') ?? 0;
   const upNext = groups
     .slice(currentIndex + 1)
     .find((g) => g.sets.some((s) => !s.completed)) ?? null;
@@ -237,11 +255,35 @@ export default function SessionPlayer() {
           aria-label="Minimise session" />
         <div className="u-grow" style={{ minWidth: 0 }}>
           <div className="t-sm u-truncate" style={{ fontWeight: 620 }}>{active.title}</div>
+          {/* Two different progress questions, and the member asks the
+              first one far more often: "how far through the WORKOUT am
+              I", then "how far through this exercise". */}
           <div className="t-xs t-faint">
-            {completed.length} of {workingSets.length} sets
+            {workingGroups.length > 0 && currentWorkingNo > 0
+              ? `Exercise ${currentWorkingNo} of ${workingGroups.length} · `
+              : ''}
+            {completed.length}/{workingSets.length} sets
             {volume > 0 && ` · ${Math.round(volume).toLocaleString('en-IN')} kg`}
           </div>
         </div>
+        {/*
+          The escape hatch, where somebody actually wants it.
+          The preference already existed on the Profile screen, which
+          is the wrong place to discover it: a member works out that
+          the demonstrations are slowing them down while they are
+          standing in front of a barbell, not while editing a profile.
+          Same stored field (§13) — turning it off here turns it off
+          for good, and we never ask again.
+        */}
+        <button
+          className="player__howtoggle"
+          aria-pressed={showHowTo}
+          onClick={toggleHowTo}
+          title={showHowTo ? 'Hide demonstrations' : 'Show demonstrations'}
+          aria-label={showHowTo ? 'Hide demonstrations' : 'Show demonstrations'}
+        >
+          <Icon name={showHowTo ? 'eye' : 'eyeOff'} size={17} />
+        </button>
         <span className="player__clock" aria-label="Elapsed time">{formatClock(elapsed)}</span>
       </div>
 
@@ -284,13 +326,14 @@ export default function SessionPlayer() {
 
               {upNext && (
                 <button className="upnext" onClick={() => setOpenId(upNext.exerciseId)}>
-                  <Icon name="chevronRight" size={16} className="t-faint" />
+                  <ExerciseThumb exerciseId={upNext.exerciseId} name={api.exercises.name(upNext.exerciseId)} />
                   <span className="u-grow" style={{ minWidth: 0 }}>
                     <span className="upnext__label">Up next</span>
                     <span className="upnext__name u-truncate" style={{ display: 'block' }}>
                       {api.exercises.name(upNext.exerciseId)}
                     </span>
                   </span>
+                  <Icon name="chevronRight" size={16} className="t-faint" />
                 </button>
               )}
 
@@ -385,6 +428,7 @@ function ExerciseCard({
   onExerciseDone: () => void;
 }) {
   const { session, toast } = useApp();
+  const [sheet, setSheet] = useState(false);
   const exercise = useData(() => (session ? safeExercise(session, exerciseId) : null), [exerciseId]);
 
   // Only the OPEN card pays for the previous-session lookup and the
@@ -393,9 +437,13 @@ function ExerciseCard({
     () => (session && open ? api.sessions.previousPerformance(session, memberId, exerciseId, sessionId) : null),
     [exerciseId, memberId, open],
   );
+  // Resolved whenever the card is open, not only when the inline
+  // animation is on: the "How to" sheet needs the same drawing, and
+  // a member who has hidden the demonstration has not said they never
+  // want to see it again.
   const howTo = useData(
-    () => (session && open && showHowTo ? api.exercises.howTo(session, exerciseId) : null),
-    [exerciseId, open, showHowTo],
+    () => (session && open ? api.exercises.howTo(session, exerciseId) : null),
+    [exerciseId, open],
   );
   const prescribed = useData(
     () => (session && open ? api.sessions.prescription(session, sessionId, exerciseId) : null),
@@ -511,36 +559,75 @@ function ExerciseCard({
 
       {open && (
         <div className="exacc__body">
-          {howTo && (
-            <HowTo key={howTo.drawing.key} drawing={howTo.drawing}
-              prop={howTo.prop} scene={howTo.scene} paused={howToPaused} />
-          )}
-
-          {/* Short guidance next to the animation (§12). One sentence —
-              the drawing is doing the explaining. */}
-          {exercise.summary && <p className="exacc__guide">{exercise.summary}</p>}
-
-          {/* Previous session — the reason the member trusts the app (§17).
-              Not for warm-ups: "last time you did arm circles" is noise,
-              and nothing about a warm-up is meant to progress. */}
-          {!isWarmup && (
-            <div className="prevline">
-              <span className="prevline__label">Last time</span>
-              {previous ? (
-                <span className="prevline__sets">
-                  {previous.sets.slice(0, 5).map((s, i) => (
-                    <span key={i} className="prevline__set">
-                      {s.weightKg > 0 ? `${s.weightKg} × ${s.reps}` : `${s.reps} reps`}
-                    </span>
-                  ))}
-                </span>
-              ) : (
-                <span className="prevline__none">First time — set your baseline.</span>
+          {/*
+            The instructional block, in the order the questions arrive:
+            what the movement looks like, what it works, then the one
+            cue worth reading mid-set. The demonstration and the muscle
+            chart sit side by side because they are answering two halves
+            of the same question and splitting them vertically pushes
+            the numbers off a 360px screen.
+          */}
+          {showHowTo && (howTo || !isWarmup) && (
+            <div className="exteach">
+              {howTo && (
+                <div className="exteach__vis">
+                  <HowTo key={howTo.drawing.key} drawing={howTo.drawing}
+                    prop={howTo.prop} scene={howTo.scene} size="player"
+                    paused={howToPaused} />
+                </div>
+              )}
+              {!isWarmup && (
+                <div className="exteach__map">
+                  <MuscleMap
+                    size="sm" variant="compact"
+                    primaryMuscles={exercise.primaryMuscles}
+                    secondaryMuscles={exercise.secondaryMuscles}
+                    muscleGroup={exercise.muscleGroup}
+                    labelFor={api.exercises.label.muscle}
+                  />
+                </div>
               )}
             </div>
           )}
 
-          {prescription && <div className="targetline">Target {prescription}</div>}
+          {/* ONE cue. The full setup, steps and mistakes are a tap away
+              and stay there — a wall of instruction between a member and
+              the weight they are about to lift is not teaching. */}
+          {(exercise.focus || exercise.summary) && (
+            <button className="exacc__focus" onClick={() => setSheet(true)}>
+              <Icon name="target" size={15} />
+              <span className="u-grow">{exercise.focus || exercise.summary}</span>
+              <span className="exacc__focusmore">How to</span>
+            </button>
+          )}
+
+          {/* Last time and today's target, side by side. They are read
+              together — "what did I do, what am I aiming at" is one
+              question — and two stacked rows made it two (§17). */}
+          {!isWarmup && (
+            <div className="exfacts">
+              <div className="exfacts__col">
+                <span className="exfacts__label">Last time</span>
+                {previous ? (
+                  <span className="exfacts__sets">
+                    {previous.sets.slice(0, 4).map((s, i) => (
+                      <span key={i} className="exfacts__set">
+                        {s.weightKg > 0 ? `${s.weightKg} × ${s.reps}` : `${s.reps} reps`}
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  <span className="exfacts__none">First time — set your baseline.</span>
+                )}
+              </div>
+              {prescription && (
+                <div className="exfacts__col exfacts__col--target">
+                  <span className="exfacts__label">Today</span>
+                  <span className="exfacts__target">{prescription}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {hint && (
             <div className="progtip" role="note">
@@ -658,6 +745,15 @@ function ExerciseCard({
           )}
         </div>
       )}
+
+      {sheet && (
+        <Modal title={exercise.name}
+          subtitle={`${api.exercises.label.muscleGroup(exercise.muscleGroup)} · ${api.exercises.label.equipment(exercise.equipment)}`}
+          onClose={() => setSheet(false)}
+          footer={<Button variant="primary" block onClick={() => setSheet(false)}>Back to my sets</Button>}>
+          <ExerciseTeaching exercise={exercise} howTo={howTo} labels={api.exercises.label} />
+        </Modal>
+      )}
     </section>
   );
 }
@@ -764,6 +860,7 @@ function ExercisePicker({
           {rows.slice(0, 40).map((e) => (
             <li key={e.id}>
               <button className="cardlist__item" onClick={() => add(e.id)}>
+                <ExerciseThumb exerciseId={e.id} name={e.name} size="sm" />
                 <span className="u-grow" style={{ minWidth: 0 }}>
                   <span className="t-sm" style={{ fontWeight: 560 }}>{e.name}</span>
                   <span className="t-xs t-faint" style={{ display: 'block' }}>

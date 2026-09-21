@@ -38,7 +38,7 @@ import {
 import { addDays, addMonths, dayOf, diffDays, monthKey, startOfMonth, todayISO } from './date';
 import {
   difficultyLabel, equipmentLabel, exerciseTypeLabel, muscleGroupLabel, muscleLabel,
-  patternLabel, TAXONOMY,
+  patternLabel, mechanicLabel, TAXONOMY,
 } from '../data/taxonomy';
 import { DRAWING_INDEX } from '../data/media/patterns';
 import type { MovementDrawing, PropGlyph, SceneGlyph } from '../data/media/figure';
@@ -1140,6 +1140,7 @@ export const exercises = {
     difficulty: difficultyLabel,
     kind: exerciseTypeLabel,
     pattern: patternLabel,
+    mechanic: mechanicLabel,
   },
 
   /**
@@ -1150,7 +1151,7 @@ export const exercises = {
     name: string; muscleGroup: string; equipment: string;
     kind?: ExerciseKind; difficulty?: Difficulty; instructions?: string;
     pattern?: string; mechanic?: string | null; summary?: string;
-    setup?: string[]; steps?: string[]; breathing?: string;
+    focus?: string; setup?: string[]; steps?: string[]; breathing?: string;
     mistakes?: string[]; safety?: string | null;
     primaryMuscles?: string[]; secondaryMuscles?: string[];
   }) {
@@ -1186,6 +1187,7 @@ export const exercises = {
         pattern: input.pattern ?? 'brace',
         difficulty: input.difficulty ?? 'intermediate',
         summary: input.summary?.trim() ?? '',
+        focus: input.focus?.trim() ?? '',
         instructions: instructions || steps.join(' '),
         setup: input.setup ?? [],
         steps: steps.length ? steps : instructions ? [instructions] : [],

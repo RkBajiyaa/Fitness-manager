@@ -280,6 +280,8 @@ export interface Exercise {
   difficulty: Difficulty;
   /** One sentence for the library card. */
   summary: string;
+  /** The single most important cue. '' where nobody has written one. */
+  focus: string;
   /**
    * Kept as the single free-text field so anything written before the
    * structured fields existed — and any member-authored exercise —

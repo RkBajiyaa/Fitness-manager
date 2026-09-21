@@ -6,6 +6,7 @@ import {
 import { SelectField } from '../../components/ui/forms';
 import { Icon } from '../../components/ui/Icon';
 import { ChartFrame, HeatStrip, LineChart, SERIES } from '../../components/charts';
+import { ExerciseThumb } from '../../components/member/ExerciseThumb';
 import { RecordWeightSheet } from './RecordWeight';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
@@ -132,8 +133,15 @@ export default function Progress() {
                     tone="good"
                     label="Progress toward target weight"
                   />
-                  <p className="t-xs t-faint u-mt-3">
-                    {Math.abs(latest.weightKg - targetWeight).toFixed(1)} kg to go.
+                  {/* "0.0 kg to go" is what a progress bar says when it
+                      has nothing left to say. Reaching the target is the
+                      whole point and deserves a sentence of its own. */}
+                  <p className="t-xs u-mt-3"
+                    style={Math.abs(latest.weightKg - targetWeight) < 0.5
+                      ? { color: 'var(--good)', fontWeight: 600 } : { color: 'var(--text-3)' }}>
+                    {Math.abs(latest.weightKg - targetWeight) < 0.5
+                      ? 'Target reached.'
+                      : `${Math.abs(latest.weightKg - targetWeight).toFixed(1)} kg to go.`}
                   </p>
                 </CardBody>
               </Card>
@@ -207,6 +215,41 @@ export default function Progress() {
               onChange={(e) => setExerciseId(e.target.value)}
               options={records.map((r) => ({ value: r.exerciseId, label: r.exerciseName }))}
             />
+
+            {/* The headline is the CHANGE, not the number. A chart of
+                estimated 1RM is only meaningful once somebody has read
+                "up 12 kg since you started" off the top of it. */}
+            {strength.length > 1 && (
+              <Card>
+                <CardBody>
+                  <div className="u-row u-gap-4" style={{ alignItems: 'center' }}>
+                    <ExerciseThumb exerciseId={activeExercise}
+                      name={api.exercises.name(activeExercise)} size="lg" />
+                    <div className="u-grow" style={{ minWidth: 0 }}>
+                      <div className="t-label">Estimated 1RM</div>
+                      <div className="u-row u-gap-2" style={{ alignItems: 'baseline', marginTop: 2 }}>
+                        <span className="u-num" style={{ fontSize: 'var(--fs-28)', fontWeight: 680, letterSpacing: '-0.02em' }}>
+                          {strength[strength.length - 1].y} kg
+                        </span>
+                        {(() => {
+                          const delta = strength[strength.length - 1].y - strength[0].y;
+                          if (Math.abs(delta) < 0.5) return <span className="t-sm t-muted">holding steady</span>;
+                          return (
+                            <span className="t-sm" style={{ color: delta > 0 ? 'var(--good)' : 'var(--text-2)', fontWeight: 600 }}>
+                              {delta > 0 ? '+' : ''}{delta.toFixed(1)} kg
+                            </span>
+                          );
+                        })()}
+                      </div>
+                      <p className="t-xs t-faint u-mt-2">
+                        over {strength.length} sessions, from {strength[0].y} kg
+                      </p>
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+
             <Card>
               <CardBody>
                 <ChartFrame

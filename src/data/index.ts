@@ -16,7 +16,7 @@ import { STRENGTH_EXERCISES } from './exercises';
 import { CARDIO_EXERCISES } from './cardio';
 import { WARMUP_EXERCISES } from './warmups';
 import { PLAN_TEMPLATES } from './plans';
-import { DRAWING_INDEX } from './media';
+import { DRAWING_INDEX, undrawableMuscles, ungroupedMuscleGroups } from './media';
 import { EQUIPMENT, EXERCISE_TYPES, MUSCLES, MUSCLE_GROUPS } from './taxonomy';
 import type { ExerciseContent } from './types';
 
@@ -76,9 +76,23 @@ export function validateContent(): ContentProblem[] {
       if (!MUSCLE_KEYS.has(m)) problems.push({ where, problem: `unknown muscle "${m}"` });
     }
     if (!ex.steps.length) problems.push({ where, problem: 'no movement steps' });
+    // The focus cue is the one line a member reads mid-set. An exercise
+    // without one silently loses the most useful sentence on the screen,
+    // and nothing else would ever report it.
+    if (!ex.focus.trim()) problems.push({ where, problem: 'no focus cue' });
     if (ex.media?.kind === 'pose' && !DRAWING_INDEX.has(ex.media.src)) {
       problems.push({ where, problem: `media points at missing drawing "${ex.media.src}"` });
     }
+  }
+
+  /* The muscle chart is keyed to the taxonomy, so a muscle we declare
+     but cannot draw is an exercise whose "primary muscle" lights nothing
+     at all — invisible in review, obvious the first time it renders. */
+  for (const muscle of undrawableMuscles()) {
+    problems.push({ where: `anatomy:${muscle}`, problem: 'taxonomy muscle has no chart region' });
+  }
+  for (const group of ungroupedMuscleGroups()) {
+    problems.push({ where: `anatomy:${group}`, problem: 'muscle group has no chart fallback' });
   }
 
   for (const plan of PLAN_TEMPLATES) {

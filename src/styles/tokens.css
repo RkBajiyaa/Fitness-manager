@@ -53,6 +53,40 @@
   --critical-soft:  #fbe8e6;
   --neutral-soft:   #eeece8;
 
+
+  /* ---- Guide: the instructional role. Reserved for "look here" —
+          the direction arrow on a demonstration and the working
+          muscle on the body chart. Deliberately NOT --accent
+          (achievement), NOT a status colour, and NOT a chart
+          series: pointing at something is its own job, and it is
+          the one the member is doing while they learn a movement. ---- */
+  --guide:          #2f4fd0;
+  --guide-strong:   #2440b4;
+  --guide-soft:     rgba(47, 79, 208, 0.30);
+  --guide-wash:     rgba(47, 79, 208, 0.07);
+
+  /* ---- The figure. A drawing needs its own ink and paper: reusing
+          --text-1 for a body contour means a typography change
+          silently redraws every exercise in the product. ---- */
+  --fig-stage:      #e6e1d7;
+  --fig-ink:        #1b1d22;
+  --fig-skin:       #ffffff;
+  --fig-ink-far:    #b5b0a5;
+  --fig-skin-far:   #ded9cf;
+  --fig-ghost:      rgba(27, 29, 34, 0.17);
+  --fig-kit:        #a29c8f;
+  --fig-pad:        #c6c0b3;
+  --fig-stack:      #b1ab9e;
+  /* The implement keeps --accent: it IS the load, and it is the
+     thing a member scanning the picture should find first. */
+  --fig-load:       var(--accent);
+
+  /* ---- The muscle chart ---- */
+  --muscle-body:      #e7e3da;
+  --muscle-body-line: #cdc7ba;
+  --muscle-primary:   var(--guide);
+  --muscle-secondary: var(--guide-soft);
+
   /* ---- Chart series (validated — see docs/ARCHITECTURE.md) ---- */
   --series-1:       #2a78d6;  /* blue   */
   --series-2:       #eb6834;  /* orange */
@@ -143,6 +177,28 @@
   --critical:       #ef6f66;
   --critical-soft:  #2d1715;
   --neutral-soft:   #26272c;
+
+
+  --guide:          #8098ff;
+  --guide-strong:   #9aadff;
+  --guide-soft:     rgba(128, 152, 255, 0.34);
+  --guide-wash:     rgba(128, 152, 255, 0.10);
+
+  --fig-stage:      #202126;
+  --fig-ink:        #0c0d10;
+  --fig-skin:       #c8c5bf;
+  --fig-ink-far:    #2e2f35;
+  --fig-skin-far:   #55565d;
+  --fig-ghost:      rgba(241, 240, 238, 0.22);
+  --fig-kit:        #4c4d54;
+  --fig-pad:        #3b3c42;
+  --fig-stack:      #45464d;
+  --fig-load:       var(--accent);
+
+  --muscle-body:      #2c2d33;
+  --muscle-body-line: #3e3f46;
+  --muscle-primary:   var(--guide);
+  --muscle-secondary: var(--guide-soft);
 
   --series-1:       #3987e5;
   --series-2:       #d95926;

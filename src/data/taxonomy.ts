@@ -181,6 +181,7 @@ const EQUIPMENT_INDEX = index(EQUIPMENT);
 const DIFFICULTY_INDEX = index(DIFFICULTIES);
 const EXERCISE_TYPE_INDEX = index(EXERCISE_TYPES);
 const PATTERN_INDEX = index(MOVEMENT_PATTERNS);
+const MECHANIC_INDEX = index(MECHANICS);
 
 /** Turns an unknown key into something a human can read. */
 function humanise(key: string): string {
@@ -206,6 +207,9 @@ export const exerciseTypeLabel = (key: string): string =>
 
 export const patternLabel = (key: string): string =>
   PATTERN_INDEX.get(key)?.label ?? humanise(key);
+
+export const mechanicLabel = (key: string): string =>
+  MECHANIC_INDEX.get(key)?.label ?? humanise(key);
 
 /** Every taxonomy list in one object, for the filter UI and the console. */
 export const TAXONOMY = {

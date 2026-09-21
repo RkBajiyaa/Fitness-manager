@@ -87,3 +87,4 @@ export function unresolvedDrawings(media: Array<ExerciseMedia | null>): string[]
 
 export { MOVEMENT_DRAWINGS, DRAWING_INDEX } from './patterns';
 export * from './figure';
+export * from './anatomy';

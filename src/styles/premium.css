@@ -99,7 +99,13 @@
   text-align: center; line-height: 1.1;
 }
 
-.ringrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-3); }
+/* Today's targets. `auto-fit` rather than a fixed three, because
+   which rings exist depends on what the gym has switched on — a
+   studio without hydration tracking must not get a hole in the row. */
+.ringrow {
+  display: grid; gap: var(--s-3);
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+}
 .ringcell {
   display: flex; flex-direction: column; align-items: center; gap: var(--s-2);
   padding: var(--s-4) var(--s-2); background: var(--surface-1);
@@ -400,9 +406,28 @@
               box-shadow var(--dur) var(--ease);
 }
 .excard:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-2); }
-.excard__name { font-size: var(--fs-14); font-weight: 600; letter-spacing: -0.008em; }
-.excard__meta { font-size: var(--fs-12); color: var(--text-3); }
-.excard__tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: auto; padding-top: var(--s-2); }
+/* The member's library row: a picture, then the words. The owner's
+   library is a desktop grid of dense text cards and keeps the base
+   `.excard` — the two screens have genuinely different jobs, and the
+   member app is capped at 560px so a multi-column grid inside it can
+   only overflow. */
+.exgrid--visual { grid-template-columns: 1fr; }
+@media (min-width: 700px)  { .exgrid--visual { grid-template-columns: 1fr; } }
+@media (min-width: 1280px) { .exgrid--visual { grid-template-columns: 1fr; } }
+
+.excard--visual {
+  flex-direction: row; align-items: center; gap: var(--s-3); padding: var(--s-3);
+}
+.excard__text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.excard__name {
+  font-size: var(--fs-14); font-weight: 600; letter-spacing: -0.008em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.excard__meta {
+  font-size: var(--fs-12); color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.excard__tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 2px; }
 .tag {
   font-size: var(--fs-11); font-weight: 550; padding: 2px 7px;
   border-radius: var(--r-full); background: var(--surface-3); color: var(--text-2);
@@ -444,63 +469,321 @@
 .inline-alert--accent { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
 
 /* ==========================================================
-   How-To demonstration (§12)
+   THE EXERCISE VISUAL SYSTEM
 
-   Sized by one rule: on a 360px phone the figure plus the
-   exercise header must leave the set inputs above the fold.
-   That is why the cell is capped rather than fluid — a media
-   block that grows with the viewport is how "compact visual"
-   quietly becomes "video wall".
+   Two drawings with two jobs — the moving figure (how the body
+   moves) and the muscle chart (what it works) — plus the sheet
+   that frames them.
+
+   Sizing rule, unchanged in spirit from the old compact visual
+   but recalibrated: the demonstration is now one of the PRIMARY
+   pieces of information rather than a supporting thumbnail, so
+   it gets a real stage. What has not changed is that the stage
+   is FIXED at each size rather than fluid. A media block that
+   grows with the viewport is how "the visual teaches the
+   movement" quietly becomes "the set inputs are below the fold"
+   on the one screen used standing up, mid-set.
    ========================================================== */
 .howto {
-  display: flex; align-items: center; gap: var(--s-3);
-  padding: var(--s-3) var(--s-4);
-  background: var(--surface-2);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  margin: 0;
+  display: flex; flex-direction: column; gap: var(--s-3);
 }
-.howto__cell {
-  flex: none; width: 104px; height: 104px;
-  background: var(--surface-3); border-radius: var(--r-md);
-  overflow: hidden; margin: 0;
+
+.howto__stage {
+  position: relative;
+  width: min(100%, 300px);
+  aspect-ratio: 1 / 1;
+  margin-inline: auto;
+  background: var(--fig-stage);
+  border-radius: var(--r-lg);
+  overflow: hidden;
 }
 .howto__svg { display: block; width: 100%; height: 100%; }
 
-.howto__fig line {
-  stroke: var(--text-1); stroke-width: 2.7;
-  stroke-linecap: round; stroke-linejoin: round;
+.howto--player .howto__stage { width: min(100%, 212px); border-radius: var(--r-md); }
+.howto--compact .howto__stage { width: min(100%, 128px); border-radius: var(--r-md); }
+
+/* ---- the body ----
+   Every shape is drawn twice: an INK pass (fill + a fat stroke,
+   which grows the silhouette by half a stroke) and a SKIN pass
+   over it. The union gets one clean contour and every internal
+   seam — hip to torso, shin to thigh — disappears. Stroking the
+   shapes individually instead draws a line across every joint. */
+.fig__ink path {
+  fill: var(--fig-ink);
+  stroke: var(--fig-ink);
+  stroke-width: 2.2;
+  stroke-linejoin: round;
 }
-.howto__head { fill: none; stroke: var(--text-1); stroke-width: 2.5; }
-.howto__ground { stroke: var(--border-strong); stroke-width: 1.5; }
-.howto__kit { fill: var(--border); }
-.howto__kit-l { stroke: var(--border-strong); stroke-width: 2.2; stroke-linecap: round; }
-/* --accent is earned here: the implement IS the load. */
-.howto__prop { stroke: var(--accent); stroke-width: 3.2; stroke-linecap: round; }
-.howto__prop-f { fill: var(--accent); }
+.fig__skin path { fill: var(--fig-skin); stroke: none; }
+.fig__ink--far path { fill: var(--fig-ink-far); stroke: var(--fig-ink-far); }
+.fig__skin--far path { fill: var(--fig-skin-far); }
+
+/* The position being moved AWAY from.
+   Outline only — a second solid body reads as two people — and
+   DASHED, because a thin continuous outline reads as an object in
+   the scene. A dash is the universal "this is not really here". */
+.fig__ghost path {
+  fill: none;
+  stroke: var(--fig-ghost);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+  stroke-dasharray: 3.5 3;
+  stroke-linecap: round;
+}
+
+/* ---- direction ----
+   --guide, not --accent: this points at the movement, and accent
+   in this product means achievement. */
+.fig__arrow > path { stroke: var(--guide); stroke-width: 2.6; stroke-linecap: round; fill: none; }
+.fig__arrowhead path { fill: var(--guide); stroke: none; }
+/* fill:none matters — the arrow's shaft is an OPEN curve, and filling
+   it paints the whole area under the arc as a solid blob. */
+.fig__arrow-halo path {
+  stroke: var(--fig-stage); stroke-width: 5.5; stroke-linecap: round;
+  stroke-linejoin: round; fill: none;
+}
+
+/* ---- the load ---- */
+.fig__bar { stroke: var(--fig-load); stroke-width: 2.6; stroke-linecap: round; }
+.fig__bar-f { fill: var(--fig-load); }
+.fig__plate { fill: var(--fig-load); }
+.fig__cable { stroke: var(--fig-load); stroke-width: 1.5; stroke-linecap: round; }
+.fig__band { stroke: var(--fig-load); stroke-width: 2.2; stroke-linecap: round; }
+
+/* ---- the kit ---- */
+.fig__ground { stroke: var(--fig-kit); stroke-width: 1.6; }
+.fig__groundfill { fill: var(--fig-kit); opacity: 0.16; }
+.fig__frame { fill: var(--fig-kit); }
+.fig__frameline { stroke: var(--fig-kit); stroke-width: 2.4; stroke-linecap: round; }
+.fig__pad { fill: var(--fig-pad); }
+.fig__stack { fill: var(--fig-stack); }
+.fig__panel { fill: var(--fig-stack); }
+
+/* ---- phases ----
+   The labels ARE the instruction. The bar under the live one runs
+   for exactly as long as that frame is held, so the strip reads as
+   a clock rather than a legend. */
+.howto__phases { display: flex; flex-direction: column; gap: var(--s-2); }
 
 .howto__steps {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
-  list-style: none; margin: 0; padding: 0; min-width: 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  list-style: none; margin: 0; padding: 0;
 }
 .howto__steps li {
-  font-size: var(--fs-12); font-weight: 540; color: var(--text-3);
-  transition: color var(--dur) var(--ease);
+  position: relative; overflow: hidden;
+  padding: 4px 10px 5px; border-radius: var(--r-full);
+  background: var(--surface-3); color: var(--text-3);
+  font-size: var(--fs-12); font-weight: 580;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.howto__steps li + li::before { content: '→'; margin-right: 6px; color: var(--text-3); }
-.howto__steps li.is-now { color: var(--text-1); font-weight: 640; }
+.howto__steps li.is-now { background: var(--brand); color: var(--brand-ink); }
+.howto__stepbar {
+  position: absolute; left: 0; bottom: 0; height: 2px; width: 0;
+  background: var(--guide);
+  animation-name: howto-hold;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes howto-hold { from { width: 0 } to { width: 100% } }
 
-/* Reduced motion: the whole movement as a strip, not a frozen frame. */
-.howto--strip { align-items: flex-start; gap: var(--s-2); }
-.howto--strip .howto__cell { width: auto; flex: 1 1 0; height: 92px; }
-.howto__step {
-  font-size: var(--fs-11); color: var(--text-3); text-align: center;
-  margin-top: 4px; font-weight: 540;
+.howto__cue {
+  font-size: var(--fs-13); color: var(--text-1); line-height: 1.5;
+  font-weight: 520;
+}
+.howto__rep {
+  font-size: var(--fs-12); color: var(--text-3); font-weight: 540;
+}
+
+/* ---- reduced motion: the movement as a strip, which is a
+   legitimate way to read it rather than a degraded one ---- */
+.howto--strip .howto__row { display: flex; gap: var(--s-2); align-items: flex-start; }
+.howto--strip .howto__cell { flex: 1 1 0; min-width: 0; }
+.howto--strip .howto__svg {
+  background: var(--fig-stage); border-radius: var(--r-md); aspect-ratio: 1 / 1; height: auto;
+}
+.howto__steplabel {
+  display: block; text-align: center; margin-top: 5px;
+  font-size: var(--fs-11); font-weight: 560; color: var(--text-3);
+}
+
+/* ---- list thumbnail: one still frame, no timer (§27) ---- */
+.posethumb {
+  display: block; width: 100%; height: 100%;
+  background: var(--fig-stage); border-radius: var(--r-md);
+}
+/* The one exercise thumbnail, at three sizes. */
+.exthumb {
+  flex: none; display: block; border-radius: var(--r-md); overflow: hidden;
+  width: 46px; height: 46px;
+}
+.exthumb--sm { width: 36px; height: 36px; border-radius: var(--r-sm); }
+.exthumb--lg { width: 64px; height: 64px; }
+.exthumb--none {
+  display: grid; place-items: center;
+  background: var(--surface-3); color: var(--text-3);
 }
 
 @media (max-width: 380px) {
-  .howto { padding: var(--s-3); gap: var(--s-2); }
-  .howto__cell { width: 88px; height: 88px; }
+  .howto__stage { width: min(100%, 256px); }
+  .howto--player .howto__stage { width: min(100%, 184px); }
 }
+
+/* ==========================================================
+   THE MUSCLE CHART
+
+   Primary and secondary differ in FILL WEIGHT, not in hue: the
+   same colour at two opacities, which no form of colour vision
+   collapses and which survives greyscale. Status colour never
+   travels alone here either — the key underneath names every
+   muscle it marked.
+   ========================================================== */
+.mmap { display: flex; flex-direction: column; gap: var(--s-3); }
+.mmap__views {
+  display: flex; gap: var(--s-3); justify-content: center;
+}
+.mmap__view { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.mmap__svg {
+  display: block; height: 158px; width: auto;
+  background: var(--surface-2); border-radius: var(--r-md);
+}
+.mmap--sm .mmap__svg { height: 104px; }
+.mmap__viewlabel {
+  font-size: var(--fs-11); font-weight: 620; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+
+.mmap__bodyink > *,
+.mmap__bodyink g > * {
+  fill: var(--muscle-body-line);
+  stroke: var(--muscle-body-line);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+.mmap__bodyfill > *,
+.mmap__bodyfill g > * {
+  fill: var(--muscle-body);
+  stroke: none;
+}
+.mmap__region { stroke: none; }
+.mmap__region--primary { fill: var(--muscle-primary); }
+.mmap__region--secondary { fill: var(--muscle-secondary); }
+
+.mmap__key { margin: 0; display: flex; flex-direction: column; gap: 5px; }
+.mmap__keyrow { display: flex; gap: var(--s-2); align-items: baseline; }
+.mmap__keyrow dt {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: var(--fs-12); font-weight: 620; color: var(--text-2);
+  min-width: 62px;
+}
+.mmap__keyrow dd {
+  margin: 0; font-size: var(--fs-12); color: var(--text-2); line-height: 1.5;
+}
+.mmap__swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.mmap__swatch--primary { background: var(--muscle-primary); }
+.mmap__swatch--secondary {
+  background: var(--muscle-secondary);
+  box-shadow: inset 0 0 0 1px var(--muscle-primary);
+}
+.mmap__none { font-size: var(--fs-12); color: var(--text-3); }
+
+/* ==========================================================
+   THE EXERCISE SHEET
+   ========================================================== */
+.exsheet { display: flex; flex-direction: column; gap: var(--s-4); }
+
+.exsheet__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.exsheet__kit,
+.exsheet__focus {
+  display: flex; align-items: flex-start; gap: var(--s-3);
+  padding: var(--s-3) var(--s-4); border-radius: var(--r-md);
+}
+.exsheet__kit { background: var(--surface-2); border: 1px solid var(--border); }
+.exsheet__kiticon,
+.exsheet__focusicon {
+  flex: none; width: 28px; height: 28px; display: grid; place-items: center;
+  border-radius: 8px; background: var(--surface-3); color: var(--text-2);
+}
+.exsheet__kitlabel,
+.exsheet__focuslabel {
+  display: block; font-size: var(--fs-11); font-weight: 640;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3);
+}
+.exsheet__kitvalue {
+  display: block; font-size: var(--fs-14); font-weight: 600; margin-top: 1px;
+}
+
+/* The one cue, alone, so it gets read. Everything else about this
+   movement is in a list; this is not in a list on purpose. */
+.exsheet__focus { background: var(--guide-wash); border: 1px solid var(--guide-soft); }
+.exsheet__focus .exsheet__focusicon { background: var(--guide-soft); color: var(--guide-strong); }
+.exsheet__focustext {
+  display: block; font-size: var(--fs-14); line-height: 1.5; margin-top: 2px;
+  color: var(--text-1); font-weight: 520;
+}
+
+.exsheet__h {
+  font-size: var(--fs-11); font-weight: 680; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--text-3); margin-bottom: var(--s-3);
+}
+.exsheet__block + .exsheet__block { margin-top: var(--s-4); }
+
+.exsheet__list { margin: 0; padding-left: var(--s-5); }
+.exsheet__list li {
+  font-size: var(--fs-13); color: var(--text-2); line-height: 1.6; margin-bottom: 4px;
+}
+
+.exsheet__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-3); }
+.exsheet__steps li { display: flex; gap: var(--s-3); font-size: var(--fs-13); line-height: 1.55; color: var(--text-1); }
+.exsheet__stepno {
+  flex: none; width: 22px; height: 22px; display: grid; place-items: center;
+  border-radius: 7px; background: var(--brand); color: var(--brand-ink);
+  font-size: var(--fs-11); font-weight: 680;
+}
+
+.exsheet__breath {
+  display: flex; align-items: center; gap: 7px; margin-top: var(--s-4);
+  font-size: var(--fs-12); color: var(--text-3);
+}
+
+.exsheet__mistakes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-2); }
+.exsheet__mistakes li {
+  display: flex; gap: var(--s-2); align-items: flex-start;
+  font-size: var(--fs-13); line-height: 1.55; color: var(--text-2);
+}
+.exsheet__mistakes svg { flex: none; margin-top: 3px; color: var(--serious); }
+
+.exsheet__safety {
+  display: flex; gap: var(--s-3); align-items: flex-start;
+  padding: var(--s-3) var(--s-4); border-radius: var(--r-md);
+  background: var(--warning-soft);
+  border: 1px solid color-mix(in srgb, var(--warning-mark) 45%, transparent);
+  font-size: var(--fs-13); line-height: 1.5; color: var(--text-1);
+}
+.exsheet__safety svg { flex: none; margin-top: 1px; color: var(--warning); }
+
+.exsheet__nodrawing {
+  display: flex; gap: var(--s-3); align-items: center;
+  padding: var(--s-4); border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px dashed var(--border-strong);
+  font-size: var(--fs-13); color: var(--text-3);
+}
+
+/* Progressive disclosure — the beginner detail folds away so an
+   experienced member is never scrolling past it to reach a number. */
+.exsheet__more { border-top: 1px solid var(--border); padding-top: var(--s-3); }
+.exsheet__more > summary {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s-2); cursor: pointer; list-style: none;
+  min-height: 44px; padding: var(--s-2) 0;
+  font-size: var(--fs-13); font-weight: 620; color: var(--text-1);
+}
+.exsheet__more > summary::-webkit-details-marker { display: none; }
+.exsheet__more > summary svg { color: var(--text-3); transition: transform var(--dur) var(--ease); }
+.exsheet__more[open] > summary svg { transform: rotate(180deg); }
+.exsheet__more > summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: var(--r-sm); }
+.exsheet__moreinner { padding-top: var(--s-2); }
 
 /* ==========================================================
    Today's workout (§3)
@@ -603,24 +886,63 @@
 
 .exacc__body { animation: fade-in var(--dur) var(--ease); }
 
-/* Previous session — the single most useful line on the screen (§17) */
-.prevline {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px var(--s-2);
+/* ---- the instructional block ----
+   Demonstration and muscle chart side by side. They answer two halves
+   of one question ("what does this look like / what does it work"),
+   and stacking them pushed the set inputs off a 360px screen — which
+   is the constraint every decision on this screen answers to. */
+.exteach {
+  display: flex; align-items: center; gap: var(--s-3);
   padding: var(--s-3) var(--s-4) 0;
 }
-.prevline__label {
+.exteach__vis { flex: 1 1 auto; min-width: 0; }
+.exteach__map { flex: 0 0 auto; }
+
+@media (max-width: 400px) {
+  .exteach { gap: var(--s-2); }
+  .exteach__map .mmap__svg { height: 92px; }
+}
+
+/* The single cue, and the way through to everything else. A button,
+   not a paragraph: the full setup, steps and mistakes are one tap
+   away and stay there until asked for. */
+.exacc__focus {
+  display: flex; align-items: center; gap: var(--s-2); width: 100%;
+  margin: var(--s-3) 0 0; padding: var(--s-3) var(--s-4);
+  background: var(--guide-wash); border: 0;
+  border-top: 1px solid var(--guide-soft); border-bottom: 1px solid var(--guide-soft);
+  text-align: left; cursor: pointer; color: var(--text-1);
+  font-size: var(--fs-13); font-weight: 520; line-height: 1.45;
+}
+.exacc__focus svg { flex: none; color: var(--guide-strong); }
+.exacc__focus:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.exacc__focusmore {
+  flex: none; font-size: var(--fs-11); font-weight: 680; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--guide-strong);
+}
+
+/* ---- last time / today, read together ---- */
+.exfacts {
+  display: flex; gap: var(--s-3); align-items: stretch;
+  padding: var(--s-3) var(--s-4) 0;
+}
+.exfacts__col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.exfacts__col--target { flex: 0 0 auto; text-align: right; align-items: flex-end; }
+.exfacts__label {
   font-size: var(--fs-11); font-weight: 620; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
-.prevline__sets {
-  display: flex; flex-wrap: wrap; gap: 5px;
-  font-size: var(--fs-13); font-variant-numeric: tabular-nums;
-}
-.prevline__set {
+.exfacts__sets { display: flex; flex-wrap: wrap; gap: 4px; }
+.exfacts__set {
   padding: 2px 7px; border-radius: var(--r-sm);
   background: var(--surface-3); color: var(--text-2); font-weight: 560;
+  font-size: var(--fs-12); font-variant-numeric: tabular-nums;
 }
-.prevline__none { font-size: var(--fs-12); color: var(--text-3); }
+.exfacts__none { font-size: var(--fs-12); color: var(--text-3); }
+.exfacts__target {
+  font-size: var(--fs-14); font-weight: 640; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
 /* Progression nudge. Amber because it is an achievement signal,
    not a warning — the member earned it. */
@@ -633,11 +955,6 @@
 }
 .progtip svg { flex: none; margin-top: 1px; }
 
-/* Target line */
-.targetline {
-  padding: var(--s-2) var(--s-4) 0;
-  font-size: var(--fs-12); color: var(--text-3); font-variant-numeric: tabular-nums;
-}
 
 /* Fast entry: tap the stepper, do not open a keyboard (§16)
 
@@ -753,8 +1070,64 @@
   background: var(--good-soft); border-color: var(--good-soft); color: var(--good);
 }
 
-/* One sentence of guidance beside the drawing (§12) */
-.exacc__guide {
-  padding: var(--s-3) var(--s-4) 0;
-  font-size: var(--fs-13); color: var(--text-2); line-height: 1.45;
+
+/* Compact muscle chart — used beside the demonstration in the player,
+   where the words live in the caption rather than a two-row key. */
+.mmap__caption {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+  font-size: var(--fs-12); font-weight: 560; color: var(--text-2);
+  text-align: center; line-height: 1.4;
 }
+.mmap--sm .mmap__views { gap: var(--s-2); }
+
+/* A plan row that opens the exercise. It looks like a list row, not a
+   button, because it IS the list — the tap is an affordance on top of
+   reading it, not the reason the row exists. */
+.exline--tap { cursor: pointer; }
+.exline--tap:hover { background: var(--surface-2); }
+.exline--tap:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+/* ==========================================================
+   Nutrition
+   ========================================================== */
+.macrorow { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-3); }
+.macro { display: flex; flex-direction: column; gap: 5px; }
+.macro__label {
+  font-size: var(--fs-11); font-weight: 620; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.macro__value { font-size: var(--fs-12); font-weight: 620; }
+
+/* Adding a food without a modal: two fields and a button, inline in
+   the meal it belongs to. The dialog stays for quantity and macros. */
+.quickadd {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--border);
+}
+.quickadd__name,
+.quickadd__kcal {
+  min-height: 44px; padding: 0 var(--s-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  background: var(--surface-1); color: var(--text-1);
+  font: inherit; font-size: var(--fs-14);
+}
+.quickadd__name { flex: 1 1 auto; min-width: 0; }
+.quickadd__kcal { flex: 0 0 74px; width: 74px; font-variant-numeric: tabular-nums; }
+.quickadd__name:focus-visible,
+.quickadd__kcal:focus-visible { outline: 2px solid var(--brand); outline-offset: -1px; }
+
+@media (max-width: 380px) {
+  .quickadd__kcal { flex-basis: 62px; width: 62px; }
+}
+
+/* Show/hide the demonstrations, in the player rather than only in
+   the profile — a member decides this mid-set, not mid-settings. */
+.player__howtoggle {
+  flex: none; width: 40px; height: 40px; display: grid; place-items: center;
+  border: 0; border-radius: var(--r-md); background: none; cursor: pointer;
+  color: var(--text-3); transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.player__howtoggle:hover { background: var(--surface-3); color: var(--text-1); }
+.player__howtoggle[aria-pressed='true'] { color: var(--text-2); }
+.player__howtoggle:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }

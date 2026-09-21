@@ -4,6 +4,9 @@ import {
   Badge, Button, Card, CardBody, CardHead, EmptyState, Segmented, StatTile,
 } from '../../components/ui/primitives';
 import { Icon } from '../../components/ui/Icon';
+import { ExerciseThumb } from '../../components/member/ExerciseThumb';
+import { ExerciseTeaching } from '../../components/member/ExerciseTeaching';
+import { Modal } from '../../components/ui/primitives';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
 import type { ISODate, WorkoutSession } from '../../lib/types';
@@ -95,6 +98,7 @@ export default function Workout() {
                     {w.exercises.map((x, i) => (
                       <li key={x.id} className="exline">
                         <span className="exline__idx">{i + 1}</span>
+                        <ExerciseThumb exerciseId={x.exerciseId} name={api.exercises.name(x.exerciseId)} size="sm" />
                         <span className="u-grow u-truncate">
                           <span className="exline__name">{api.exercises.name(x.exerciseId)}</span>
                         </span>
@@ -166,6 +170,7 @@ export default function Workout() {
                         {pd.exercises.map((x, i) => (
                           <li key={x.id} className="exline">
                             <span className="exline__idx">{i + 1}</span>
+                            <ExerciseThumb exerciseId={x.exerciseId} name={api.exercises.name(x.exerciseId)} size="sm" />
                             <span className="u-grow u-truncate">
                               <span className="exline__name">{api.exercises.name(x.exerciseId)}</span>
                             </span>
@@ -278,6 +283,7 @@ function TodayView({
   onStart: () => void;
   onChangePlan: () => void;
 }) {
+  const [learning, setLearning] = useState<string | null>(null);
   const date = parseISO(today);
   const dayName = DAYS[date.getDay()];
   const dateLabel = `${dayName} · ${date.getDate()} ${MONTHS[date.getMonth()]}`;
@@ -384,6 +390,7 @@ function TodayView({
                   <span className="exline__idx exacc__idx--warmup">
                     {doneIds.has(ex.id) ? <Icon name="check" size={12} strokeWidth={2.6} /> : i + 1}
                   </span>
+                  <ExerciseThumb exerciseId={ex.id} name={ex.name} size="sm" />
                   <span className="u-grow" style={{ minWidth: 0 }}>
                     <span className="exline__name" style={{ display: 'block' }}>{ex.name}</span>
                     <span className="exline__target">{ex.summary}</span>
@@ -399,7 +406,7 @@ function TodayView({
         <Card>
           <DaySection label="Strength" count={plan.strength.length} />
           <CardBody flush>
-            <PlannedList items={plan.strength} doneIds={doneIds} session={todaySession} />
+            <PlannedList items={plan.strength} doneIds={doneIds} session={todaySession} onLearn={setLearning} />
           </CardBody>
         </Card>
       )}
@@ -408,7 +415,7 @@ function TodayView({
         <Card>
           <DaySection label="Cardio" count={plan.cardio.length} />
           <CardBody flush>
-            <PlannedList items={plan.cardio} doneIds={doneIds} session={todaySession} />
+            <PlannedList items={plan.cardio} doneIds={doneIds} session={todaySession} onLearn={setLearning} />
           </CardBody>
         </Card>
       )}
@@ -417,10 +424,12 @@ function TodayView({
         <Card>
           <DaySection label="Mobility" count={plan.other.length} />
           <CardBody flush>
-            <PlannedList items={plan.other} doneIds={doneIds} session={todaySession} />
+            <PlannedList items={plan.other} doneIds={doneIds} session={todaySession} onLearn={setLearning} />
           </CardBody>
         </Card>
       )}
+
+      {learning && <LearnSheet exerciseId={learning} onClose={() => setLearning(null)} />}
 
       {plan.cooldown.length > 0 && (
         <Card>
@@ -430,6 +439,7 @@ function TodayView({
               {plan.cooldown.map((ex) => (
                 <li key={ex.id} className="exline">
                   <span className="exline__idx"><Icon name="moon" size={12} /></span>
+                  <ExerciseThumb exerciseId={ex.id} name={ex.name} size="sm" />
                   <span className="u-grow" style={{ minWidth: 0 }}>
                     <span className="exline__name" style={{ display: 'block' }}>{ex.name}</span>
                     <span className="exline__target">{ex.summary}</span>
@@ -444,6 +454,34 @@ function TodayView({
   );
 }
 
+/**
+ * The teaching sheet, opened from a plan row.
+ *
+ * It fetches on mount rather than being hoisted into the page, so a
+ * day with twelve exercises resolves ONE drawing — the one somebody
+ * actually asked about.
+ */
+function LearnSheet({ exerciseId, onClose }: { exerciseId: string; onClose: () => void }) {
+  const { session } = useApp();
+  const exercise = useData(
+    () => { try { return session ? api.exercises.get(session, exerciseId) : null; } catch { return null; } },
+    [exerciseId],
+  );
+  const howTo = useData(
+    () => (session ? api.exercises.howTo(session, exerciseId) : null),
+    [exerciseId],
+  );
+  if (!exercise) return null;
+  return (
+    <Modal title={exercise.name}
+      subtitle={`${api.exercises.label.muscleGroup(exercise.muscleGroup)} · ${api.exercises.label.equipment(exercise.equipment)}`}
+      onClose={onClose}
+      footer={<Button variant="primary" block onClick={onClose}>Close</Button>}>
+      <ExerciseTeaching exercise={exercise} howTo={howTo} labels={api.exercises.label} />
+    </Modal>
+  );
+}
+
 function DaySection({ label, count }: { label: string; count: number }) {
   return (
     <div className="daysec">
@@ -455,11 +493,12 @@ function DaySection({ label, count }: { label: string; count: number }) {
 }
 
 function PlannedList({
-  items, doneIds, session,
+  items, doneIds, session, onLearn,
 }: {
   items: api.PlannedItem[];
   doneIds: Set<string>;
   session: WorkoutSession | null;
+  onLearn: (exerciseId: string) => void;
 }) {
   return (
     <ul>
@@ -471,10 +510,19 @@ function PlannedList({
           (s) => s.exerciseId === ex.id && s.completed && s.kind !== 'warmup') ?? [];
         const reps = p.repsMax > p.reps ? `${p.reps}–${p.repsMax}` : String(p.reps);
         return (
-          <li key={p.id} className={`exline ${done ? 'exline--done' : ''}`} style={{ alignItems: 'flex-start' }}>
+          /* The whole row opens the exercise. Somebody looking at
+             tomorrow's session and wondering what a "Romanian
+             deadlift" is should not have to go and find the library. */
+          <li key={p.id} className={`exline exline--tap ${done ? 'exline--done' : ''}`}
+            style={{ alignItems: 'flex-start' }}
+            onClick={() => onLearn(ex.id)}
+            role="button" tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onLearn(ex.id); } }}
+            aria-label={`${ex.name} — how to do it`}>
             <span className="exline__idx" style={{ marginTop: 2 }}>
               {done ? <Icon name="check" size={12} strokeWidth={2.6} /> : i + 1}
             </span>
+            <ExerciseThumb exerciseId={ex.id} name={ex.name} size="sm" />
             <span className="u-grow" style={{ minWidth: 0 }}>
               <span className="exline__name" style={{ display: 'block' }}>{ex.name}</span>
               <span className="exline__target">
