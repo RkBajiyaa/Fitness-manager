@@ -81,11 +81,25 @@
      thing a member scanning the picture should find first. */
   --fig-load:       var(--accent);
 
-  /* ---- The muscle chart ---- */
+  /* ---- The muscle chart ----
+     Anatomical red, and NOT --guide, which this used to borrow.
+     Two reasons, both learned from looking at the screen:
+       · an indigo thigh does not read as a muscle. Crimson on a
+         neutral body is the convention every anatomy chart and
+         every atlas before them has used, and a beginner arrives
+         already fluent in it;
+       · the direction arrow (--guide) and the working muscle are
+         on screen at the same moment. When both were indigo the
+         eye could not separate "where the body goes" from "what
+         is doing the work" — two instructions in one colour.
+     It is not --bad either: it never appears on a control, never
+     carries a status, and never travels without the key naming
+     the muscles it marked. */
   --muscle-body:      #e7e3da;
   --muscle-body-line: #cdc7ba;
-  --muscle-primary:   var(--guide);
-  --muscle-secondary: var(--guide-soft);
+  --muscle-detail:    #d3ccbe;
+  --muscle-primary:   #c1272d;
+  --muscle-secondary: rgba(193, 39, 45, 0.30);
 
   /* ---- Chart series (validated — see docs/ARCHITECTURE.md) ---- */
   --series-1:       #2a78d6;  /* blue   */
@@ -197,8 +211,9 @@
 
   --muscle-body:      #2c2d33;
   --muscle-body-line: #3e3f46;
-  --muscle-primary:   var(--guide);
-  --muscle-secondary: var(--guide-soft);
+  --muscle-detail:    #3a3b42;
+  --muscle-primary:   #e0555a;
+  --muscle-secondary: rgba(224, 85, 90, 0.32);
 
   --series-1:       #3987e5;
   --series-2:       #d95926;

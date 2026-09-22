@@ -17,13 +17,24 @@
                           travelled. A still frame cannot say
                           "downwards", and a loop only says it to
                           somebody who happened to be watching.
-     WHAT THE PHASES ARE  the labels, as a strip, with the current
-                          one marked. The labels ARE the short
-                          instruction — "Setup → Lower → Press".
-     WHAT ONE REP IS      spelled out under the strip, because
-                          "how far do I go?" is the question a
-                          beginner cannot answer from a picture of
-                          a person part-way through a movement.
+     WHAT THE PHASES ARE  the name of the phase you are looking
+                          at, and how many there are. In the
+                          player this is a caption ACROSS THE
+                          BOTTOM OF THE STAGE, not a row of
+                          controls under it: the demonstration
+                          already shows the phases by running
+                          through them, and a strip of pills plus
+                          a cue plus a summary line was 133px of
+                          an exercise card that has to reach the
+                          set inputs. The full strip survives at
+                          `hero`, where explaining IS the job.
+     WHAT ONE REP IS      spelled out under the strip in the
+                          teaching sheet, because "how far do I
+                          go?" is a question a beginner cannot
+                          answer from a picture of a person
+                          part-way through a movement. It is not
+                          in the player: by then they have opened
+                          the sheet or they have not.
 
    Three things it still deliberately does NOT do:
 
@@ -178,24 +189,34 @@ export function HowTo({
     </ol>
   );
 
-  // Reduced motion: the whole movement as a strip, which is a
-  // legitimate way to read a movement rather than a degraded one.
+  // Reduced motion: the movement as a strip, which is a legitimate
+  // way to read a movement rather than a degraded one.
+  //
+  // In the player the strip has the SAME footprint as the animated
+  // stage — one 180px square — so three frames came out 46px wide
+  // each and taught nothing. It shows two instead: the start, and the
+  // position the effort is in. Start and end are the pair that
+  // actually define a repetition; the frames between them are the
+  // animation's business. The sheet still gets every frame.
   if (reduced) {
+    const strip = size === 'hero' || frames.length < 3
+      ? frames
+      : [frames[0], frames[effortIndex(drawing)]].filter((f, i, a) => a.indexOf(f) === i);
     return (
       <figure className={`howto howto--${size} howto--strip`}>
         <div className="howto__row">
-          {frames.map((f, i) => (
+          {strip.map((f, i) => (
             <div key={f.label + i} className="howto__cell">
               <svg viewBox={FIGURE_VIEWBOX} className="howto__svg" role="img"
                 aria-label={`${drawing.name}, ${f.label}`}>
                 <Frame drawing={drawing} frame={f} prop={prop} scene={scene}
-                  ghost={i > 0 ? frames[i - 1] : null} arrow />
+                  ghost={i > 0 ? strip[i - 1] : null} arrow />
               </svg>
               <span className="howto__steplabel">{f.label}</span>
             </div>
           ))}
         </div>
-        {showPhases && repPhases && (
+        {showPhases && size === 'hero' && repPhases && (
           <figcaption className="howto__rep">One rep: {repPhases}</figcaption>
         )}
         {description}
@@ -207,6 +228,10 @@ export function HowTo({
   const previous = frames.length > 1 ? frames[(frame - 1 + frames.length) % frames.length] : null;
   const hold = current.holdMs ?? 700;
 
+  // The teaching sheet explains; the player demonstrates. Only the
+  // sheet gets the strip, the per-frame cue and the rep summary.
+  const explain = size === 'hero';
+
   return (
     <figure className={`howto howto--${size}`}>
       <div className="howto__stage">
@@ -215,9 +240,23 @@ export function HowTo({
           <Frame drawing={drawing} frame={current} prop={prop} scene={scene}
             ghost={previous} arrow />
         </svg>
+
+        {/* The phase, ON the picture. It costs no layout height, it
+            sits next to the thing it is naming, and the dots answer
+            "how many parts are there" without a control surface. */}
+        {showPhases && !explain && frames.length > 1 && (
+          <div className="howto__tag" aria-hidden="true">
+            <span className="howto__tagname">{current.label}</span>
+            <span className="howto__dots">
+              {frames.map((f, i) => (
+                <i key={f.label + i} className={i === frame ? 'is-now' : ''} />
+              ))}
+            </span>
+          </div>
+        )}
       </div>
 
-      {showPhases && (
+      {showPhases && explain && (
         <div className="howto__phases">
           <ol className="howto__steps" aria-hidden="true">
             {frames.map((f, i) => (

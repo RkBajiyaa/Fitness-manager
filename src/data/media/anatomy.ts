@@ -86,6 +86,66 @@ export const LIMB_SEGMENTS: ReadonlyArray<
 export const SHOULDER_CAP = { cx: 75, cy: 50, r: 9.5 } as const;
 
 /* ============================================================
+   DEFINITION
+
+   The body underneath the highlights was a flat silhouette — a
+   paper doll with coloured patches on it. Real anatomy charts
+   carry enough modelling that you can find a muscle BEFORE it is
+   highlighted, which is what makes the highlight mean something
+   rather than just being the only shape on the page.
+
+   These are hairlines, not shading: a linea alba, the lower edge
+   of a pectoral, the fold under a glute, the split between the
+   two heads of a calf. They sit UNDER the highlights, in their
+   own quiet token, and they are geometry like everything else
+   here — nothing to author per exercise and nothing to drift.
+
+   `SIDE` is mirrored with the rest of the half-body. `CENTRE` is
+   drawn once, because a line on the midline mirrored onto itself
+   doubles its own weight.
+   ============================================================ */
+
+export interface DefinitionLines {
+  /** Authored on the viewer's right half; drawn twice. */
+  side: readonly string[];
+  /** On x = 60. Drawn once. */
+  centre: readonly string[];
+}
+
+export const DEFINITION: Readonly<Record<AnatomyView, DefinitionLines>> = {
+  front: {
+    side: [
+      'M 61 68.5 C 66 69.5 71 68.6 74 65.5',        // lower edge of the pec
+      'M 68.5 43 C 72 50 73 58 71.5 62.5',          // deltoid / pec seam
+      'M 60.5 78 L 68.6 77.6',                      // abdominal bands
+      'M 60.5 85.5 L 68.2 85.2',
+      'M 60.5 93 L 67.4 92.6',
+      'M 70.5 71 C 73 79 72.6 89 70 96',            // oblique edge
+      'M 73 70.5 L 70.6 72.5',                      // serratus
+      'M 73.6 75 L 71.2 77',
+      'M 82.5 77.5 L 87.5 80.5',                    // elbow crease
+      'M 66 106 C 70 118 71 133 69.4 145',          // vastus lateralis
+      'M 62.6 106 C 62.9 120 62.9 134 62.5 144',    // vastus medialis
+      'M 63 149 C 66 151.6 69.4 151 71 148.4',      // patella
+    ],
+    centre: ['M 60 45.5 L 60 68', 'M 60 70.5 L 60 99'],
+  },
+  back: {
+    side: [
+      'M 66 46.5 C 65 56 63 66 61 76',              // trapezius edge
+      'M 66.5 52.5 C 71 55.5 72.6 62 70 68',        // scapula
+      'M 61 84 C 66 84 71 80 74 73.5',              // lower border of the lat
+      'M 77 62 C 81 67 83.5 73 84.6 78',            // triceps
+      'M 61 117.5 C 67 118.6 72 116 75.4 112',      // gluteal fold
+      'M 68 120.5 C 69 132 68.6 141 67 148',        // hamstring split
+      'M 67.5 154 C 68.6 165 67.6 176 66 185',      // gastrocnemius split
+      'M 82.5 78 L 87.5 81',                        // elbow
+    ],
+    centre: ['M 60 44 L 60 96'],
+  },
+};
+
+/* ============================================================
    MUSCLE REGIONS
 
    A muscle can appear on one view or both. `forearms` is the same
@@ -120,17 +180,28 @@ export const MUSCLE_REGIONS: Readonly<Record<MuscleKey, MuscleRegion>> = {
     back: 'M 70.5 46 C 76.5 47 79 53 77 58.5 C 73.5 59.5 70.5 55 69.5 50 Z',
   },
   pectorals: {
-    front: 'M 60.5 45.5 L 72 47 C 78 50.5 78 60.5 73.5 66.5 C 68.5 70.5 63 69.5 60.5 68.5 Z',
+    /* Stops at x = 61.4 so the mirrored pair leaves a sternum between
+       them. Two pectorals meeting in the middle is one shield. */
+    front: 'M 61.4 45.5 L 72 47 C 78 50.5 78 60.5 73.5 66.5 C 68.5 70.5 63.5 69.5 61.4 68.5 Z',
   },
   lats: {
-    back: 'M 67 55.5 C 75 60 78 70 74 82 C 70 90 65 92.5 61 92.5 L 61 84 '
-      + 'C 64 76 66 66 67 55.5 Z',
+    /* A WING. Authored as an oval reaching the midline, this drew a
+       single red disc over the spine the moment its mirror image
+       joined it — a lat pulldown whose chart looked like a target.
+       Now it runs from under the armpit, out along the flank and in
+       to the lower back, and stops short of x = 61.5 so the mirrored
+       pair leaves the spinal channel open. */
+    back: 'M 71.5 56.5 C 77 59 79 68 76.5 79 C 74 89 69 95 63.5 97 '
+      + 'L 62.8 88 C 67.5 81 70 70.5 70.5 60 Z',
   },
   rhomboids: {
-    back: 'M 60.5 49.5 L 68 53 C 69 60 68 67 66 72 L 60.5 73 Z',
+    /* Inboard and high — the strip between the spine and the shoulder
+       blade. It has to keep its own territory or a back exercise that
+       works both it and the lats paints one shape. */
+    back: 'M 61.5 50 L 68.5 53.5 C 69.3 60 68.6 66.5 67 71 L 61.5 72 Z',
   },
   spinal_erectors: {
-    back: 'M 60.5 52 L 65 54.5 C 65 68 64 82 63 94 L 60.5 95 Z',
+    back: 'M 61.5 54 L 65.8 56.5 C 66 70 65.2 84 64 96 L 61.5 96.5 Z',
   },
   biceps: {
     front: 'M 70.5 59.5 C 78 59.5 82 66 84 74 L 79.5 80 C 76 74 72 68 70.5 59.5 Z',
@@ -143,7 +214,7 @@ export const MUSCLE_REGIONS: Readonly<Record<MuscleKey, MuscleRegion>> = {
     back: 'M 82 82 C 88 88.5 92 100 93 110.5 L 87.5 112 C 85 100 82 90 79.5 84.5 Z',
   },
   abs: {
-    front: 'M 60.5 69 L 69 70 C 70 80 69 90 67 98 L 60.5 99 Z',
+    front: 'M 61.3 69 L 69 70 C 70 80 69 90 67 98 L 61.3 99 Z',
   },
   obliques: {
     front: 'M 69.5 70 C 74 74 74.5 84 71 95 L 67.5 97 C 69.5 88 70.5 79 69.5 70 Z',
@@ -152,7 +223,7 @@ export const MUSCLE_REGIONS: Readonly<Record<MuscleKey, MuscleRegion>> = {
     front: 'M 61 97.5 L 68 96.5 C 69.5 102 68 107.5 65 110.5 L 61 106 Z',
   },
   glutes: {
-    back: 'M 60.5 93.5 L 72 96 C 77.5 100 78.5 110 75 117.5 L 61 118.5 Z',
+    back: 'M 61.6 93.8 L 72 96 C 77.5 100 78.5 110 75 117.5 L 61.6 118.5 Z',
   },
   quads: {
     front: 'M 61 103 L 74.5 105 C 76.5 118 75 134 71.5 146.5 L 62 147 C 62 132 62 117 61 103 Z',
@@ -173,8 +244,8 @@ export const MUSCLE_REGIONS: Readonly<Record<MuscleKey, MuscleRegion>> = {
    * heart and lungs".
    */
   heart_lungs: {
-    front: 'M 60.5 44 L 72.5 47 C 77 54 76 65 71.5 69 L 60.5 70.5 Z',
-    back: 'M 60.5 46 L 70 49 C 73.5 56 72.5 66 69 69.5 L 60.5 71 Z',
+    front: 'M 61.3 44 L 72.5 47 C 77 54 76 65 71.5 69 L 61.3 70.5 Z',
+    back: 'M 61.3 46 L 70 49 C 73.5 56 72.5 66 69 69.5 L 61.3 71 Z',
   },
 };
 
@@ -185,6 +256,35 @@ export const MUSCLE_REGIONS: Readonly<Record<MuscleKey, MuscleRegion>> = {
 /** Does this view have anything to show for these muscles? */
 export function viewHasRegions(muscles: readonly string[], view: AnatomyView): boolean {
   return muscles.some((m) => MUSCLE_REGIONS[m as MuscleKey]?.[view]);
+}
+
+/**
+ * The view worth showing when there is only room for one.
+ *
+ * Not every exercise is best understood from the same side, and
+ * showing both costs twice the width for one useful answer: a lat
+ * pulldown says nothing on the front of the body, and a biceps curl
+ * says nothing on the back.
+ *
+ * Scored rather than counted, because counting picks the busier
+ * view and not the truer one. The FIRST primary muscle is worth
+ * most: the content author already ranked them, and that ranking is
+ * the best information anybody has about which one the member came
+ * for. A back squat is the case that settled the weights — quads on
+ * the front, glutes on the back, with the hamstrings and the spinal
+ * erectors also behind. Counted, the back wins; but a member opening
+ * a squat is looking for their quadriceps, which is exactly what
+ * `primaryMuscles[0]` says. Front takes a tie for the same reason:
+ * it is the view a member reads as "me".
+ */
+export function keyViewFor(
+  primary: readonly string[], secondary: readonly string[] = [],
+): AnatomyView {
+  const drawn = (m: string, view: AnatomyView) => Boolean(MUSCLE_REGIONS[m as MuscleKey]?.[view]);
+  const score = (view: AnatomyView) =>
+    primary.reduce((n, m, i) => n + (drawn(m, view) ? (i === 0 ? 3 : 2) : 0), 0)
+    + secondary.reduce((n, m) => n + (drawn(m, view) ? 1 : 0), 0);
+  return score('back') > score('front') ? 'back' : 'front';
 }
 
 export function regionPath(muscle: string, view: AnatomyView): string | undefined {

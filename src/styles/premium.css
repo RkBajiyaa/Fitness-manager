@@ -500,8 +500,36 @@
 }
 .howto__svg { display: block; width: 100%; height: 100%; }
 
-.howto--player .howto__stage { width: min(100%, 212px); border-radius: var(--r-md); }
+.howto--player .howto__stage { width: min(100%, 180px); border-radius: var(--r-md); }
 .howto--compact .howto__stage { width: min(100%, 128px); border-radius: var(--r-md); }
+
+/* ---- the phase, ON the picture ----
+   This replaced a strip of pills, a cue paragraph and a summary
+   line under the stage: 133px of an exercise card that has to
+   reach the set inputs, spent telling you what the picture was
+   already showing. The caption costs no layout height, sits
+   against the thing it names, and the dots answer "how many parts
+   are there" without offering a control to press. */
+.howto__tag {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-2);
+  padding: 5px 9px 6px;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.42), rgb(0 0 0 / 0));
+  pointer-events: none;
+}
+.howto__tagname {
+  font-size: var(--fs-11); font-weight: 680; letter-spacing: 0.04em;
+  text-transform: uppercase; color: #fff;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.howto__dots { display: flex; gap: 4px; flex: none; }
+.howto__dots i {
+  width: 5px; height: 5px; border-radius: var(--r-full);
+  background: rgb(255 255 255 / 0.45);
+  transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.howto__dots i.is-now { background: #fff; transform: scale(1.35); }
 
 /* ---- the body ----
    Every shape is drawn twice: an INK pass (fill + a fat stroke,
@@ -598,6 +626,11 @@
 /* ---- reduced motion: the movement as a strip, which is a
    legitimate way to read it rather than a degraded one ---- */
 .howto--strip .howto__row { display: flex; gap: var(--s-2); align-items: flex-start; }
+/* The strip stands in for the stage, so it takes the stage's width.
+   Without this the cells have no basis to share and collapse to
+   thumbnails — a member who has asked for less motion got the least
+   readable demonstration in the product. */
+.howto--player.howto--strip .howto__row { width: min(100%, 180px); margin-inline: auto; }
 .howto--strip .howto__cell { flex: 1 1 0; min-width: 0; }
 .howto--strip .howto__svg {
   background: var(--fig-stage); border-radius: var(--r-md); aspect-ratio: 1 / 1; height: auto;
@@ -626,7 +659,19 @@
 
 @media (max-width: 380px) {
   .howto__stage { width: min(100%, 256px); }
-  .howto--player .howto__stage { width: min(100%, 184px); }
+  .howto--player .howto__stage { width: min(100%, 164px); }
+  .howto--player.howto--strip .howto__row { width: min(100%, 164px); }
+}
+
+/* The member app is capped at 560px, so there is exactly one step up
+   from the phone and this is it. The stage is still FIXED — it just
+   has a second fixed size — because a stage that tracks the viewport
+   is how the set inputs end up below the fold. */
+@media (min-width: 480px) {
+  .howto--player .howto__stage { width: min(100%, 252px); }
+  .howto--player.howto--strip .howto__row { width: min(100%, 252px); }
+  .exteach { gap: var(--s-4); }
+  .exteach__map .mmap--key.mmap--sm .mmap__svg { height: 204px; }
 }
 
 /* ==========================================================
@@ -651,6 +696,27 @@
 .mmap__viewlabel {
   font-size: var(--fs-11); font-weight: 620; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
+}
+
+/* Both views are worth showing in the teaching sheet, but only one
+   of them is the ANSWER. The other is there so you can see that it
+   is not. */
+.mmap--both .mmap__view.is-key .mmap__svg {
+  box-shadow: inset 0 0 0 1.5px var(--muscle-secondary);
+}
+.mmap--both .mmap__view.is-key .mmap__viewlabel { color: var(--muscle-primary); }
+
+/* One view, larger — the player. Two bodies at 104px was two
+   charts too small to find a muscle on; the view that carries the
+   primary muscles at 150px is one chart you can read. */
+.mmap--key .mmap__svg { height: 150px; background: var(--surface-2); }
+.mmap--key.mmap--sm .mmap__svg { height: 150px; }
+
+/* Modelling under the highlights. Hairlines, not shading: enough
+   body that a muscle is findable before it is coloured in. */
+.mmap__detail path {
+  fill: none; stroke: var(--muscle-detail);
+  stroke-width: 0.9; stroke-linecap: round;
 }
 
 .mmap__bodyink > *,
@@ -892,15 +958,17 @@
    and stacking them pushed the set inputs off a 360px screen — which
    is the constraint every decision on this screen answers to. */
 .exteach {
-  display: flex; align-items: center; gap: var(--s-3);
+  display: flex; align-items: center; justify-content: center; gap: var(--s-3);
   padding: var(--s-3) var(--s-4) 0;
 }
-.exteach__vis { flex: 1 1 auto; min-width: 0; }
+.exteach__vis { flex: 0 1 auto; min-width: 0; }
 .exteach__map { flex: 0 0 auto; }
 
+/* At 360px the pair is 164 + 8 + 86 in a 296px card, which fits with
+   room to spare — the chart does not need shrinking as well, and a
+   smaller body is a body you cannot find a muscle on. */
 @media (max-width: 400px) {
   .exteach { gap: var(--s-2); }
-  .exteach__map .mmap__svg { height: 92px; }
 }
 
 /* The single cue, and the way through to everything else. A button,
@@ -908,11 +976,11 @@
    away and stay there until asked for. */
 .exacc__focus {
   display: flex; align-items: center; gap: var(--s-2); width: 100%;
-  margin: var(--s-3) 0 0; padding: var(--s-3) var(--s-4);
+  margin: var(--s-3) 0 0; padding: var(--s-2) var(--s-4);
   background: var(--guide-wash); border: 0;
   border-top: 1px solid var(--guide-soft); border-bottom: 1px solid var(--guide-soft);
   text-align: left; cursor: pointer; color: var(--text-1);
-  font-size: var(--fs-13); font-weight: 520; line-height: 1.45;
+  font-size: var(--fs-12); font-weight: 520; line-height: 1.4;
 }
 .exacc__focus svg { flex: none; color: var(--guide-strong); }
 .exacc__focus:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
@@ -1074,11 +1142,21 @@
 /* Compact muscle chart — used beside the demonstration in the player,
    where the words live in the caption rather than a two-row key. */
 .mmap__caption {
-  display: flex; align-items: center; gap: 6px; justify-content: center;
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center;
+  column-gap: 6px; row-gap: 2px;
   font-size: var(--fs-12); font-weight: 560; color: var(--text-2);
-  text-align: center; line-height: 1.4;
+  text-align: center; line-height: 1.35; margin: 0;
+}
+.mmap__captionview {
+  font-size: var(--fs-11); font-weight: 680; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.mmap__captionnames {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  flex-wrap: wrap;
 }
 .mmap--sm .mmap__views { gap: var(--s-2); }
+.mmap--key { gap: var(--s-2); }
 
 /* A plan row that opens the exercise. It looks like a list row, not a
    button, because it IS the list — the tap is an affordance on top of

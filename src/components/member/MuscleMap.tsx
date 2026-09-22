@@ -1,12 +1,12 @@
 /* ============================================================
    THE MUSCLE MAP — "which part of me is this working?"
 
-   A front-and-back body chart with the exercise's muscles marked
-   on it. Primary muscles are filled solid; secondary muscles are
-   the same hue at a fraction of the weight, so they read as
+   A body chart with the exercise's muscles marked on it. Primary
+   muscles are filled solid in anatomical red; secondary muscles
+   are the same hue at a fraction of the weight, so they read as
    "also involved" without competing with the answer.
 
-   Three rules this component exists to enforce:
+   Four rules this component exists to enforce:
 
      · PRIMARY AND SECONDARY MUST LOOK DIFFERENT, and the
        difference must survive both themes and a colourblind
@@ -21,20 +21,23 @@
        which is honest, and if there is nothing to say it renders
        the body with nothing marked rather than inventing a
        plausible-looking highlight.
-
-   `--accent` is not used here on purpose. Accent means achievement
-   in this product (a record, a streak, a milestone); a muscle you
-   are about to train is information, not a reward.
+     · IT SHOWS THE VIEW THAT ANSWERS THE QUESTION. A lat pulldown
+       has nothing to say on the front of the body and a biceps
+       curl has nothing to say on the back. Where there is only
+       room for one chart it shows the one that carries the
+       primary muscles (`views='key'`); where there is room for
+       both it still marks which one is the answer.
    ============================================================ */
 import { memo, useMemo } from 'react';
 import {
-  ANATOMY_VIEWBOX, BODY_SOLIDS, LIMB_SEGMENTS, MIRROR, SHOULDER_CAP, TORSO_PATH,
-  musclesForGroup, regionPath, type AnatomyView,
+  ANATOMY_VIEWBOX, BODY_SOLIDS, DEFINITION, LIMB_SEGMENTS, MIRROR, SHOULDER_CAP,
+  TORSO_PATH, keyViewFor, musclesForGroup, regionPath, type AnatomyView,
 } from '../../data/media/anatomy';
 import { limbPath } from '../../data/media/figure';
 
 /**
- * The static body, identical on both views. Never re-rendered.
+ * The static body, identical on both views apart from its
+ * definition lines. Never re-rendered.
  *
  * Drawn in the same two passes as the moving figure: an ink pass
  * (fill plus a fat stroke) and a fill pass over it. Stroking the
@@ -43,7 +46,7 @@ import { limbPath } from '../../data/media/figure';
  * than a body, which quietly contradicts the muscle regions laid
  * over it.
  */
-const Body = memo(function Body() {
+const Body = memo(function Body({ view }: { view: AnatomyView }) {
   const side = (
     <>
       {LIMB_SEGMENTS.map(([a, b, wa, wb], i) => (
@@ -64,10 +67,20 @@ const Body = memo(function Body() {
       <g transform={MIRROR}>{side}</g>
     </>
   );
+  const lines = DEFINITION[view];
   return (
     <>
       <g className="mmap__bodyink">{all}</g>
       <g className="mmap__bodyfill">{all}</g>
+      {/* Modelling, under the highlights: enough of a body that a
+          member can find a muscle before it is coloured in. */}
+      <g className="mmap__detail">
+        {lines.centre.map((d, i) => <path key={`c${i}`} d={d} />)}
+        {lines.side.map((d, i) => <path key={`s${i}`} d={d} />)}
+        <g transform={MIRROR}>
+          {lines.side.map((d, i) => <path key={`m${i}`} d={d} />)}
+        </g>
+      </g>
     </>
   );
 });
@@ -83,17 +96,19 @@ function Region({ d, tone }: { d: string; tone: 'primary' | 'secondary' }) {
 }
 
 function View({
-  view, primary, secondary, label,
+  view, primary, secondary, label, isKey, showLabel,
 }: {
   view: AnatomyView;
   primary: string[];
   secondary: string[];
   label: string;
+  isKey: boolean;
+  showLabel: boolean;
 }) {
   return (
-    <div className="mmap__view">
+    <div className={`mmap__view ${isKey ? 'is-key' : ''}`}>
       <svg viewBox={ANATOMY_VIEWBOX} className="mmap__svg" role="presentation" focusable="false">
-        <Body />
+        <Body view={view} />
         {/* Secondary first: where two muscles overlap on the chart
             the primary must win, and paint order is the cheapest
             way to guarantee it. */}
@@ -106,13 +121,14 @@ function View({
           return d ? <Region key={m} d={d} tone="primary" /> : null;
         })}
       </svg>
-      <span className="mmap__viewlabel">{label}</span>
+      {showLabel && <span className="mmap__viewlabel">{label}</span>}
     </div>
   );
 }
 
 export function MuscleMap({
-  primaryMuscles, secondaryMuscles, muscleGroup, labelFor, size = 'md', variant = 'full',
+  primaryMuscles, secondaryMuscles, muscleGroup, labelFor,
+  size = 'md', variant = 'full', views = 'both',
 }: {
   primaryMuscles: readonly string[];
   secondaryMuscles: readonly string[];
@@ -127,6 +143,12 @@ export function MuscleMap({
    * never travels alone, the caption just says less.
    */
   variant?: 'full' | 'compact';
+  /**
+   * `key` draws only the view that carries the primary muscles. The
+   * player uses it: one large readable body beside the demonstration
+   * beats two bodies too small to find a muscle on.
+   */
+  views?: 'both' | 'key';
 }) {
   const primary = useMemo(
     () => (primaryMuscles.length ? [...primaryMuscles] : musclesForGroup(muscleGroup)),
@@ -139,21 +161,45 @@ export function MuscleMap({
     [secondaryMuscles, primary],
   );
 
+  const key = useMemo(() => keyViewFor(primary, secondary), [primary, secondary]);
+  const shown: AnatomyView[] = views === 'key' ? [key] : ['front', 'back'];
   const nothingKnown = primary.length === 0 && secondary.length === 0;
 
+  /**
+   * On a single view the caption may only name what that view
+   * actually marks. A back squat working "Quads, Glutes" printed
+   * beside a chart showing glutes alone teaches a beginner that the
+   * red shape is their quadriceps. The full two-view key is one tap
+   * away in the teaching sheet — colour never travels without its
+   * word, and no word travels without its colour.
+   */
+  const onView = (list: readonly string[]) =>
+    (views === 'key' ? list.filter((m) => regionPath(m, key)) : list);
+  const captionOf = onView(primary).length ? onView(primary) : onView(secondary);
+  const named = captionOf.map(labelFor).join(', ');
+
   return (
-    <div className={`mmap mmap--${size}`}>
+    <div className={`mmap mmap--${size} mmap--${views}`}>
       <div className="mmap__views">
-        <View view="front" primary={primary} secondary={secondary} label="Front" />
-        <View view="back" primary={primary} secondary={secondary} label="Back" />
+        {shown.map((v) => (
+          <View key={v} view={v} primary={primary} secondary={secondary}
+            label={v === 'front' ? 'Front' : 'Back'}
+            isKey={v === key && !nothingKnown}
+            showLabel={views === 'both'} />
+        ))}
       </div>
 
       {nothingKnown ? (
         <p className="mmap__none">No muscles recorded.</p>
       ) : variant === 'compact' ? (
         <p className="mmap__caption">
-          <span className="mmap__swatch mmap__swatch--primary" />
-          {(primary.length ? primary : secondary).map(labelFor).join(', ')}
+          {views === 'key' && (
+            <span className="mmap__captionview">{key === 'front' ? 'Front' : 'Back'}</span>
+          )}
+          <span className="mmap__captionnames">
+            <span className="mmap__swatch mmap__swatch--primary" />
+            {named}
+          </span>
         </p>
       ) : (
         <dl className="mmap__key">

@@ -19,8 +19,14 @@
      · Previous performance sits directly above the inputs (§17),
        because "what did I do last time" is the question the member
        actually opens the app to answer.
+     · OPENING AN EXERCISE KEEPS YOU WITH THAT EXERCISE. One card
+       open at a time means every expand also COLLAPSES one, and
+       when the collapsing card is above the tapped one the whole
+       list slides up under your finger — measured at 360px, a tap
+       on exercise 4 sent it 689px off the top of the screen. The
+       accordion is scroll-anchored: see `useLayoutEffect` below.
    ============================================================ */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, EmptyState, Modal } from '../../components/ui/primitives';
 import { SearchInput } from '../../components/ui/forms';
@@ -37,6 +43,12 @@ import { errorMessage } from '../../components/ui/forms';
 /** Plate-friendly step. Most gyms' smallest usable jump on a bar. */
 const WEIGHT_STEP = 2.5;
 const DEFAULT_REST_SEC = 90;
+/**
+ * Where an exercise you just opened comes to rest, measured from the
+ * top of the scrolling area. Not zero: a few pixels of the card above
+ * stay visible, which is what tells you the list did not reset.
+ */
+const ANCHOR_TOP = 10;
 
 export default function SessionPlayer() {
   const { session, toast, celebrate, confirm } = useApp();
@@ -56,8 +68,26 @@ export default function SessionPlayer() {
   const [elapsed, setElapsed] = useState(0);
   /** Which exercise is expanded. null ⇒ fall back to the first with work left. */
   const [openId, setOpenId] = useState<string | null>(null);
+  /**
+   * A second tap on the open header folds it away. The auto-open
+   * fallback would immediately re-open the same card, so "nothing is
+   * expanded" needs its own flag rather than `openId = null`.
+   */
+  const [collapsed, setCollapsed] = useState(false);
   /** Suppress the frame timer while a number is being edited. */
   const [editing, setEditing] = useState(false);
+
+  /* ---- scroll anchoring ---- */
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const cardEls = useRef(new Map<string, HTMLElement>());
+  /**
+   * What the next layout should do with the card we are about to
+   * open or fold. `hold` is the viewport y the header was at when it
+   * was tapped — set when folding, so the card stays exactly under
+   * the finger; null when opening, so it comes up to ANCHOR_TOP.
+   */
+  const anchor = useRef<{ id: string; hold: number | null } | null>(null);
+  const settled = useRef(false);
 
   // `undefined` means nobody has expressed a preference, which is not
   // the same as "off" (§13). Only an explicit false turns it off.
@@ -109,7 +139,16 @@ export default function SessionPlayer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, memberId, active]);
 
-  const groups = useMemo(() => (active ? groupByExercise(active) : []), [active]);
+  /**
+   * NOT `useMemo(..., [active])`. `db.commit()` mutates rows in place
+   * (§25), so adding an exercise mid-workout pushes sets onto the
+   * very object this already holds — same reference, so a memo keyed
+   * on it never recomputes. The session was written, the toast said
+   * so, and the new exercise did not appear until a reload. `useData`
+   * folds the store revision into its own dependencies, which is the
+   * only key that is honest about an in-place store.
+   */
+  const groups = useData(() => (active ? groupByExercise(active) : []), [active]);
 
   /**
    * Display numbers count WORKING exercises only. Numbering the
@@ -136,6 +175,82 @@ export default function SessionPlayer() {
   const currentId = openId && groups.some((g) => g.exerciseId === openId)
     ? openId
     : firstUnfinished ?? groups[0]?.exerciseId ?? null;
+  /** What is actually expanded — `currentId` is still "where you are". */
+  const openCardId = collapsed ? null : currentId;
+
+  /**
+   * KEEP THE SCREEN WITH THE EXERCISE YOU TAPPED.
+   *
+   * Expanding one card collapses another, and when the collapsing
+   * card is above the tapped one every pixel it gives up drags the
+   * list upward — plus the browser clamps scrollTop when the
+   * document shrinks. Measured on a 360×780 phone: tapping exercise
+   * 4 while it sat comfortably at y=376 put it at y=-313. You tap an
+   * exercise because you want to look at that exercise; the screen
+   * should still be looking at it afterwards.
+   *
+   * So the scroll position is not preserved — the CARD's position
+   * is. After the DOM has changed and before the browser paints,
+   * measure where the card landed and correct the scroller by the
+   * difference. Opening brings the header to ANCHOR_TOP, which is
+   * the only position that guarantees the newly revealed body is on
+   * screen; folding puts the header back exactly where the finger
+   * left it.
+   *
+   * useLayoutEffect, not useEffect: after paint this is a visible
+   * jump followed by a correction. It also runs ONLY when the open
+   * card changes, so ticking a set never moves the page.
+   *
+   * The one thing it cannot do is scroll past the end: folding the
+   * LAST card removes most of what there was to scroll against, so
+   * the browser clamps and that header drifts down the screen. It
+   * stays visible and it never rises, which is the part that
+   * mattered — you are still looking at the exercise you tapped.
+   */
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    const pending = anchor.current;
+    anchor.current = null;
+    if (!scroller) return;
+    const targetId = openCardId ?? pending?.id ?? null;
+    const el = targetId ? cardEls.current.get(targetId) : null;
+    if (!el) return;
+    // The first card opens itself on mount; the member has not asked
+    // for anything yet, so nothing should move.
+    if (!settled.current) { settled.current = true; return; }
+    const want = pending?.hold ?? scroller.getBoundingClientRect().top + ANCHOR_TOP;
+    const delta = el.getBoundingClientRect().top - want;
+    if (Math.abs(delta) < 2) return;
+    const reduced = typeof window !== 'undefined' && window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    scroller.scrollTo({
+      top: scroller.scrollTop + delta,
+      behavior: reduced ? 'auto' : 'smooth',
+    });
+  }, [openCardId]);
+
+  /**
+   * Tapping a header. The open one folds away; any other one opens.
+   * `headerTop` is measured by the caller BEFORE React re-renders,
+   * which is the only moment it is still true.
+   */
+  const toggleCard = (id: string, headerTop: number) => {
+    if (id === openCardId) {
+      anchor.current = { id, hold: headerTop };
+      setCollapsed(true);
+      return;
+    }
+    anchor.current = { id, hold: null };
+    setCollapsed(false);
+    setOpenId(id);
+  };
+
+  /** Jumping, adding and auto-advancing all mean "open this one". */
+  const goTo = (id: string) => {
+    anchor.current = { id, hold: null };
+    setCollapsed(false);
+    setOpenId(id);
+  };
 
   if (!session || !memberId) return null;
 
@@ -170,7 +285,7 @@ export default function SessionPlayer() {
     const idx = groups.findIndex((g) => g.exerciseId === fromExerciseId);
     const next = groups.slice(idx + 1).find((g) => g.sets.some((s) => !s.completed))
       ?? groups.find((g) => g.exerciseId !== fromExerciseId && g.sets.some((s) => !s.completed));
-    setOpenId(next ? next.exerciseId : fromExerciseId);
+    goTo(next ? next.exerciseId : fromExerciseId);
   };
 
   const finish = async () => {
@@ -292,7 +407,7 @@ export default function SessionPlayer() {
         <div className="playerprog__fill" style={{ width: `${progressPct}%` }} />
       </div>
 
-      <div className="player__body">
+      <div className="player__body" ref={scrollerRef}>
         <div className="player__inner">
           {groups.length === 0 ? (
             <EmptyState
@@ -302,7 +417,7 @@ export default function SessionPlayer() {
             />
           ) : (
             <>
-              <JumpBar groups={groups} currentId={currentId} numbers={displayNumbers} onJump={setOpenId} />
+              <JumpBar groups={groups} currentId={openCardId} numbers={displayNumbers} onJump={goTo} />
 
               <div className="exacc">
                 {groups.map((group, i) => (
@@ -313,10 +428,14 @@ export default function SessionPlayer() {
                     exerciseId={group.exerciseId}
                     sets={group.sets}
                     memberId={memberId}
-                    open={group.exerciseId === currentId}
+                    open={group.exerciseId === openCardId}
                     showHowTo={showHowTo}
                     howToPaused={editing}
-                    onOpen={() => setOpenId(group.exerciseId)}
+                    registerEl={(el) => {
+                      if (el) cardEls.current.set(group.exerciseId, el);
+                      else cardEls.current.delete(group.exerciseId);
+                    }}
+                    onToggle={(top) => toggleCard(group.exerciseId, top)}
                     onEditing={setEditing}
                     onSetCompleted={(restSec) => setRest({ total: restSec, left: restSec })}
                     onExerciseDone={() => advance(group.exerciseId)}
@@ -325,7 +444,7 @@ export default function SessionPlayer() {
               </div>
 
               {upNext && (
-                <button className="upnext" onClick={() => setOpenId(upNext.exerciseId)}>
+                <button className="upnext" onClick={() => goTo(upNext.exerciseId)}>
                   <ExerciseThumb exerciseId={upNext.exerciseId} name={api.exercises.name(upNext.exerciseId)} />
                   <span className="u-grow" style={{ minWidth: 0 }}>
                     <span className="upnext__label">Up next</span>
@@ -370,7 +489,7 @@ export default function SessionPlayer() {
           sessionId={active.id}
           memberId={memberId}
           onClose={() => setPicker(false)}
-          onAdded={(id) => setOpenId(id)}
+          onAdded={(id) => goTo(id)}
         />
       )}
     </div>
@@ -417,12 +536,15 @@ function JumpBar({
    ============================================================ */
 function ExerciseCard({
   index, sessionId, exerciseId, sets, memberId, open, showHowTo, howToPaused,
-  onOpen, onEditing, onSetCompleted, onExerciseDone,
+  registerEl, onToggle, onEditing, onSetCompleted, onExerciseDone,
 }: {
   index: number;
   sessionId: string; exerciseId: string; sets: SessionSet[]; memberId: string;
   open: boolean; showHowTo: boolean; howToPaused: boolean;
-  onOpen: () => void;
+  /** Lets the player measure this card when the accordion changes. */
+  registerEl: (el: HTMLElement | null) => void;
+  /** Carries the header's viewport y, read before React re-renders. */
+  onToggle: (headerTop: number) => void;
   onEditing: (v: boolean) => void;
   onSetCompleted: (restSec: number) => void;
   onExerciseDone: () => void;
@@ -534,11 +656,12 @@ function ExerciseCard({
   };
 
   return (
-    <section className={`exacc__item ${open ? 'is-open' : ''} ${allDone ? 'is-done' : ''}`}>
+    <section ref={registerEl}
+      className={`exacc__item ${open ? 'is-open' : ''} ${allDone ? 'is-done' : ''}`}>
       <button
         className="exacc__btn"
         aria-expanded={open}
-        onClick={onOpen}
+        onClick={(e) => onToggle(e.currentTarget.getBoundingClientRect().top)}
       >
         <span className={`exacc__idx ${isWarmup ? 'exacc__idx--warmup' : ''}`}>
           {allDone ? <Icon name="check" size={14} strokeWidth={2.8} /> : isWarmup ? 'W' : index}
@@ -579,7 +702,7 @@ function ExerciseCard({
               {!isWarmup && (
                 <div className="exteach__map">
                   <MuscleMap
-                    size="sm" variant="compact"
+                    size="sm" variant="compact" views="key"
                     primaryMuscles={exercise.primaryMuscles}
                     secondaryMuscles={exercise.secondaryMuscles}
                     muscleGroup={exercise.muscleGroup}
