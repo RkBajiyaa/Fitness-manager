@@ -16,7 +16,7 @@ import { STRENGTH_EXERCISES } from './exercises';
 import { CARDIO_EXERCISES } from './cardio';
 import { WARMUP_EXERCISES } from './warmups';
 import { PLAN_TEMPLATES } from './plans';
-import { DRAWING_INDEX, undrawableMuscles, ungroupedMuscleGroups } from './media';
+import { DRAWING_INDEX, MODEL_DRAWINGS, undrawableMuscles, ungroupedMuscleGroups } from './media';
 import { EQUIPMENT, EXERCISE_TYPES, MUSCLES, MUSCLE_GROUPS } from './taxonomy';
 import type { ExerciseContent } from './types';
 
@@ -93,6 +93,29 @@ export function validateContent(): ContentProblem[] {
   }
   for (const group of ungroupedMuscleGroups()) {
     problems.push({ where: `anatomy:${group}`, problem: 'muscle group has no chart fallback' });
+  }
+
+  /* The 3D demonstrations are keyed by exercise SLUG rather than by a
+     media row, because they are a second visual system layered over
+     the existing library rather than a replacement for its media
+     abstraction. That makes a typo in a slug completely silent: the
+     exercise simply keeps its flat drawing and nobody finds out. */
+  for (const model of MODEL_DRAWINGS) {
+    if (!EXERCISE_BY_SLUG.has(model.slug)) {
+      problems.push({ where: `model3d:${model.slug}`, problem: 'names an exercise we do not ship' });
+    }
+  }
+  const modelSlugs = new Set(MODEL_DRAWINGS.map((m) => m.slug));
+  if (modelSlugs.size !== MODEL_DRAWINGS.length) {
+    problems.push({ where: 'model3d', problem: 'two drawings claim the same exercise' });
+  }
+  for (const model of MODEL_DRAWINGS) {
+    if (model.frames.length < 2) {
+      problems.push({ where: `model3d:${model.slug}`, problem: 'a demonstration needs at least two frames' });
+    }
+    for (const f of model.frames) {
+      if (!f.label.trim()) problems.push({ where: `model3d:${model.slug}`, problem: 'frame with no label' });
+    }
   }
 
   for (const plan of PLAN_TEMPLATES) {

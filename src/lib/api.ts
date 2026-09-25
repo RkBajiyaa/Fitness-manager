@@ -41,6 +41,7 @@ import {
   patternLabel, mechanicLabel, TAXONOMY,
 } from '../data/taxonomy';
 import { DRAWING_INDEX } from '../data/media/patterns';
+import { MODEL_INDEX, type Model3DDrawing } from '../data/media/poses3d';
 import type { MovementDrawing, PropGlyph, SceneGlyph } from '../data/media/figure';
 import { compose, providerFor, type TemplateContext } from './integrations/messaging';
 
@@ -1034,6 +1035,18 @@ export interface ResolvedHowTo {
   drawing: MovementDrawing;
   prop: PropGlyph;
   scene: SceneGlyph;
+  /**
+   * The premium 3D demonstration, where one exists.
+   *
+   * Twelve exercises have one and fifty-three do not, and that is
+   * the point of this phase — the twelve are a controlled test of
+   * the quality bar before the rest follow. Resolving it HERE rather
+   * than in a screen means the fallback is one `??` in one place:
+   * a screen asks for the How-To, gets a model if there is one and
+   * the flat drawing if there is not, and never learns which
+   * exercises are in the pilot.
+   */
+  model: Model3DDrawing | null;
 }
 
 export const exercises = {
@@ -1129,7 +1142,17 @@ export const exercises = {
       drawing,
       prop: (exercise.media.prop ?? drawing.prop) as PropGlyph,
       scene: (exercise.media.scene ?? drawing.scene) as SceneGlyph,
+      // Keyed by the CONTENT slug, which only global rows carry — a
+      // gym's or a member's own exercise can never accidentally
+      // inherit a model built for something else.
+      model: exercise.slug ? MODEL_INDEX.get(exercise.slug) ?? null : null,
     };
+  },
+
+  /** Which exercises have the 3D treatment, for a library badge or a count. */
+  hasModel(session: Session, exerciseId: string): boolean {
+    const exercise = exercises.visible(session).find((e) => e.id === exerciseId);
+    return Boolean(exercise?.slug && MODEL_INDEX.has(exercise.slug));
   },
 
   /** Display helpers, re-exported so a screen imports one module. */

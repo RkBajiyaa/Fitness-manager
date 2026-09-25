@@ -34,6 +34,7 @@ import { Icon } from '../../components/ui/Icon';
 import { HowTo } from '../../components/member/HowTo';
 import { ExerciseThumb } from '../../components/member/ExerciseThumb';
 import { MuscleMap } from '../../components/member/MuscleMap';
+import { regionsFor } from '../../components/member/Figure3D';
 import { ExerciseTeaching } from '../../components/member/ExerciseTeaching';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
@@ -696,7 +697,10 @@ function ExerciseCard({
                 <div className="exteach__vis">
                   <HowTo key={howTo.drawing.key} drawing={howTo.drawing}
                     prop={howTo.prop} scene={howTo.scene} size="player"
-                    paused={howToPaused} />
+                    paused={howToPaused}
+                    model={howTo.model}
+                    primary={regionsFor(exercise.primaryMuscles)}
+                    secondary={regionsFor(exercise.secondaryMuscles)} />
                 </div>
               )}
               {!isWarmup && (

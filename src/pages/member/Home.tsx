@@ -1,3 +1,31 @@
+/* ============================================================
+   THE MEMBER HOME — a fitness dashboard, not an account page.
+
+   The first screen answers one question, and the rest of it is
+   ordered by how often a member asks the next one:
+
+     1  WHAT AM I DOING TODAY?   the workout, as the hero, with
+                                 its state on it and one button.
+     2  AM I ON TRACK TODAY?     the four daily targets.
+     3  AM I CONSISTENT?         streak and the last eight weeks.
+     4  AM I GETTING ANYWHERE?   body weight and volume, moving.
+     5  the things people tap for often enough to deserve a tile.
+     6  MY MEMBERSHIP            once, quietly, and only as loudly
+                                 as the situation actually is.
+
+   What changed and why: this screen used to open with a streak
+   headline and then THREE stacked alerts — a renewal countdown, an
+   outstanding balance and a paid-of-billed breakdown — before it
+   ever mentioned training. Three separate alarms about one fact is
+   how a fitness app starts feeling like an invoice. Membership is
+   now one strip that knows how to be quiet, and it sits below the
+   training.
+
+   Nothing was removed. Hydration, nutrition, weigh-in, the
+   first-week checklist, quick actions, studio news and the weekly
+   history are all still here — they are just no longer competing
+   with each other for the top of the page.
+   ============================================================ */
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button, Card, CardBody, CardHead } from '../../components/ui/primitives';
@@ -30,8 +58,9 @@ export default function MemberHome() {
   const todaySession = useData(() => (session && memberId ? safe(() => api.sessions.onDate(session, memberId, today), null) : null), [memberId]);
   const activeSession = useData(() => (session && memberId ? safe(() => api.sessions.active(session, memberId), null) : null), [memberId]);
   const latest = useData(() => (session && memberId ? safe(() => api.measurements.latest(session, memberId), null) : null), [memberId]);
+  const weights = useData(() => (session && memberId ? safe(() => api.measurements.list(session, memberId), []) : []), [memberId]);
   const waterMl = useData(() => (session && memberId ? safe(() => api.water.today(session, memberId), 0) : 0), [memberId]);
-  const recentSessions = useData(() => (session && memberId ? safe(() => api.sessions.completed(session, memberId).slice(0, 8), []) : []), [memberId]);
+  const recentSessions = useData(() => (session && memberId ? safe(() => api.sessions.completed(session, memberId).slice(0, 12), []) : []), [memberId]);
   const news = useData(() => (session ? safe(() => api.announcements.list(session), []) : []), [session?.gymId]);
   const platformNews = useData(() => api.platform.publishedUpdates('members'), []);
   const myWorkouts = useData(
@@ -71,6 +100,17 @@ export default function MemberHome() {
     .filter((s) => s.date >= addDays(today, -6))
     .reduce((sum, s) => sum + sessionVolume(s), 0);
 
+  /** Body weight, now versus roughly a month ago. Only if there are two points. */
+  const weightTrend = (() => {
+    if (weights.length < 2 || !latest) return null;
+    const cutoff = addDays(today, -35);
+    const earlier = [...weights].reverse().find((m) => m.takenAt <= cutoff) ?? weights[0];
+    if (earlier.id === latest.id) return null;
+    const delta = latest.weightKg - earlier.weightKg;
+    if (Math.abs(delta) < 0.15) return { delta: 0, since: earlier.takenAt };
+    return { delta, since: earlier.takenAt };
+  })();
+
   const addWater = async (ml: number) => {
     if (!session || !memberId) return;
     const total = await api.water.add(session, memberId, ml);
@@ -84,159 +124,99 @@ export default function MemberHome() {
     return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
   })();
 
+  /* ---- today's state, decided once and used everywhere ---- */
+  const state: 'active' | 'done' | 'rest' | 'todo' =
+    activeSession ? 'active' : todaySession ? 'done' : restDay ? 'rest' : 'todo';
+  const workedSets = todaySession?.sets.filter((s) => s.kind !== 'warmup').length ?? 0;
+  const title = activeSession ? activeSession.title
+    : state === 'rest' ? 'Rest day'
+      : day?.title ?? (program ? 'Free session' : 'Train freely');
+
   return (
     <div className="anim-page u-col u-gap-4">
-      {/* ---- Consistency is the hero, not the expiry date ---- */}
-      <section className="mhero">
-        <div className="mhero__greeting" style={{ position: 'relative' }}>{greeting}, {first}</div>
+      <p className="mgreet">
+        {greeting}, {first}
+        <span>{relativeDay(today)}</span>
+      </p>
 
-        {streaks.training.current > 0 ? (
-          <>
-            <div className="mhero__headline">
-              <span className="mhero__streak">
-                {streaks.training.current}<span>day streak</span>
-              </span>
-            </div>
-            <p className="mhero__sub">
-              {streaks.training.trainedToday
-                ? "Today's session is done. That's how it's built."
-                : streaks.training.restToday
-                  ? 'Scheduled rest day — recovery keeps the streak going.'
-                  : "Train today to keep it going."}
-            </p>
-          </>
-        ) : (
-          <>
-            <div className="mhero__headline">
-              {streaks.totalSessions > 0 ? 'Time to start a new streak' : 'Your first session is waiting'}
-            </div>
-            <p className="mhero__sub">
-              {streaks.totalSessions > 0
-                ? `${streaks.totalSessions} sessions logged so far. One today restarts the run.`
-                : 'Everything your coach has planned is ready in the app.'}
-            </p>
-          </>
-        )}
-
-        <div className="mhero__chips">
-          <span className="mhero__chip">
-            <Icon name="dumbbell" size={13} />{streaks.sessionsThisMonth} this month
+      {/* ============================================================
+          1 — TODAY. The hero, and the only thing on this screen
+          that gets to be this big.
+          ============================================================ */}
+      <section className={`todayhero todayhero--${state}`}>
+        <div className="todayhero__head">
+          <span className={`todayhero__state todayhero__state--${state}`}>
+            {state === 'active' ? 'In progress'
+              : state === 'done' ? 'Completed'
+                : state === 'rest' ? 'Rest day' : "Today's workout"}
+            {/* Which programme this day belongs to. It answers "what am
+                I following at the moment" without needing a row of its
+                own, and it is the one piece of membership-adjacent
+                context that is genuinely about training. */}
+            {program?.name && <em>{program.name}</em>}
           </span>
-          <span className="mhero__chip">
-            <Icon name="target" size={13} />{streaks.weekly.hit} of 8 weeks on target
-          </span>
-          {streaks.training.longest > streaks.training.current && (
-            <span className="mhero__chip">
-              <Icon name="trophy" size={13} />best {streaks.training.longest}
-            </span>
-          )}
-        </div>
-      </section>
-
-      {/* ---- Membership only speaks up when it actually matters ---- */}
-      {status === 'expiring' && (
-        <div className="inline-alert inline-alert--warning">
-          <Icon name="clock" size={17} style={{ flex: 'none', marginTop: 1, color: 'var(--warning)' }} />
-          <span>
-            <span className="t-sm" style={{ fontWeight: 600 }}>
-              {daysLeft === 0 ? 'Your membership ends today' : `Renewal due in ${daysLeft} days`}
-            </span>
-            <span className="t-xs t-muted" style={{ display: 'block', marginTop: 2 }}>
-              Speak to the front desk to keep your training uninterrupted.
-            </span>
-          </span>
-        </div>
-      )}
-      {status === 'expired' && (
-        <div className="inline-alert inline-alert--critical">
-          <Icon name="alert" size={17} style={{ flex: 'none', marginTop: 1, color: 'var(--critical)' }} />
-          <span>
-            <span className="t-sm" style={{ fontWeight: 600 }}>Your membership has expired</span>
-            <span className="t-xs t-muted" style={{ display: 'block', marginTop: 2 }}>
-              It ended {relativeDay(membership!.endDate).toLowerCase()}. Renew at the studio to start training again.
-            </span>
-          </span>
-        </div>
-      )}
-      {dues.due > 0 && (
-        <div className="inline-alert inline-alert--warning">
-          <Icon name="wallet" size={17} style={{ flex: 'none', marginTop: 1, color: 'var(--warning)' }} />
-          <span className="t-sm">
-            <strong>{money(dues.due)} outstanding</strong> on your current plan.
-            <span className="t-xs t-muted" style={{ display: 'block', marginTop: 2 }}>
-              You have paid {money(dues.paid)} of {money(dues.billed)}.
-            </span>
-          </span>
-        </div>
-      )}
-
-      {/* ---- Today ---- */}
-      <section className="todaycard">
-        <div className="todaycard__head">
-          <div className="todaycard__eyebrow">Today</div>
-          <div className="todaycard__title">
-            {activeSession ? activeSession.title
-              : restDay ? 'Rest day'
-              : day?.title ?? (program ? 'Free session' : 'Train freely')}
-          </div>
-          <div className="todaycard__focus">
-            {activeSession ? 'Session in progress'
-              : restDay ? (day?.notes || 'Recovery is part of the plan. Move, eat, sleep.')
-              : day?.focus || 'No plan assigned yet — log whatever you train.'}
-          </div>
+          <h1 className="todayhero__title">{title}</h1>
+          <p className="todayhero__focus">
+            {state === 'active' ? 'Pick up where you left off.'
+              : state === 'done' ? `${workedSets} sets logged${weekVolume > 0 ? '' : ''}. Recovery starts now.`
+                : state === 'rest' ? (day?.notes || 'Recovery is part of the plan. Move, eat, sleep.')
+                  : day?.focus || 'No plan assigned yet — log whatever you train.'}
+          </p>
         </div>
 
-        {planned.length > 0 && !restDay && (
-          <ul className="todaycard__list">
-            {planned.slice(0, 6).map((x, i) => {
+        {/* The movements, as pictures. A member who cannot read
+            "Romanian Deadlift" can still recognise the shape of it,
+            and this is the one place every exercise of the day is
+            visible without opening anything. */}
+        {planned.length > 0 && state !== 'rest' && (
+          <ul className="todayhero__strip" aria-label="Today's exercises">
+            {planned.slice(0, 6).map((x) => {
               const done = doneIds.has(x.exerciseId);
               return (
-                <li key={x.id} className={`exline ${done ? 'exline--done' : ''}`}>
-                  <span className="exline__idx">{done ? <Icon name="check" size={12} strokeWidth={2.6} /> : i + 1}</span>
-                  <ExerciseThumb exerciseId={x.exerciseId} name={api.exercises.name(x.exerciseId)} size="sm" />
-                  <span className="u-grow" style={{ minWidth: 0 }}>
-                    <span className="exline__name u-truncate" style={{ display: 'block' }}>
-                      {api.exercises.name(x.exerciseId)}
-                    </span>
-                  </span>
-                  <span className="exline__target u-nowrap">
-                    {x.sets} × {x.reps}{x.targetWeightKg ? ` · ${x.targetWeightKg} kg` : ''}
-                  </span>
+                <li key={x.id} className={done ? 'is-done' : ''}>
+                  <ExerciseThumb exerciseId={x.exerciseId} name={api.exercises.name(x.exerciseId)} />
+                  {done && <span className="todayhero__tick"><Icon name="check" size={11} strokeWidth={3} /></span>}
                 </li>
               );
             })}
+            {planned.length > 6 && <li className="todayhero__more">+{planned.length - 6}</li>}
           </ul>
         )}
 
-        <div className="todaycard__foot">
-          {activeSession ? (
+        {planned.length > 0 && state !== 'rest' && (
+          <p className="todayhero__meta">
+            {planned.length} exercises
+            {doneCount > 0 && doneCount < planned.length && ` · ${doneCount} done`}
+            {day?.focus && state !== 'todo' ? ` · ${day.focus}` : ''}
+          </p>
+        )}
+
+        <div className="todayhero__act">
+          {state === 'active' ? (
             <Button variant="primary" size="lg" block icon="play" onClick={() => nav('/member/session')}>
               Continue workout
             </Button>
-          ) : todaySession ? (
+          ) : state === 'done' ? (
             <div className="u-row u-gap-3">
               <span className="u-grow u-row u-gap-2 t-sm" style={{ color: 'var(--good)', fontWeight: 560 }}>
                 <Icon name="checkCircle" size={16} />
-                Completed · {todaySession.sets.filter((s) => s.kind !== 'warmup').length} sets
+                Done · {workedSets} sets
               </span>
               <Button onClick={() => nav('/member/workout')}>View</Button>
             </div>
-          ) : restDay ? (
-            <Button block icon="dumbbell" onClick={() => nav('/member/session')}>
-              Train anyway
-            </Button>
+          ) : state === 'rest' ? (
+            <Button block icon="dumbbell" onClick={() => nav('/member/session')}>Train anyway</Button>
           ) : (
             <Button variant="primary" size="lg" block icon="play" onClick={() => nav('/member/session')}>
-              Start workout{planned.length ? ` · ${planned.length} exercises` : ''}
+              Start workout
             </Button>
-          )}
-          {doneCount > 0 && doneCount < planned.length && (
-            <p className="t-xs t-faint u-mt-3 u-center">{doneCount} of {planned.length} exercises done today</p>
           )}
         </div>
       </section>
 
-      {/* ---- Today's three targets ---- */}
+      {/* ============================================================
+          2 — TODAY'S TARGETS
+          ============================================================ */}
       <section>
         <div className="ringrow">
           <button className="ringcell" onClick={() => nav(todaySession ? '/member/workout' : '/member/session')}>
@@ -257,7 +237,7 @@ export default function MemberHome() {
               </span>
             </Ring>
             <span className="ringcell__label">Water</span>
-            <span className="ringcell__value">{(target / 1000).toFixed(1)} L target</span>
+            <span className="ringcell__value">of {(target / 1000).toFixed(1)} L</span>
           </div>
           )}
 
@@ -276,7 +256,7 @@ export default function MemberHome() {
               </Ring>
               <span className="ringcell__label">Food</span>
               <span className="ringcell__value">
-                {nutrition.planned.toLocaleString('en-IN')} kcal target
+                of {nutrition.planned.toLocaleString('en-IN')} kcal
               </span>
             </button>
           )}
@@ -361,7 +341,88 @@ export default function MemberHome() {
         </Card>
       )}
 
-      {/* ---- Quick actions ---- */}
+      {/* ============================================================
+          3 — CONSISTENCY. The streak and the eight weeks behind it
+          belong together: one is the headline and the other is the
+          evidence, and they used to be at opposite ends of the page.
+          ============================================================ */}
+      {streaks.totalSessions > 0 && (
+        <section className="mcard">
+          <div className="mcard__head">
+            <h2 className="mcard__title">Consistency</h2>
+            <button className="mcard__link" onClick={() => nav('/member/progress')}>
+              Progress <Icon name="arrowRight" size={13} />
+            </button>
+          </div>
+
+          <div className="consist">
+            <div className="consist__streak">
+              <span className="consist__num">{streaks.training.current}</span>
+              <span className="consist__unit">day<br />streak</span>
+            </div>
+            <div className="consist__weeks">
+              <div className="weekbars" aria-hidden="true">
+                {streaks.weekly.series.slice(-8).map((w) => (
+                  <span key={w.weekStart}
+                    className={`weekbars__b ${w.hit ? 'is-hit' : w.count > 0 ? 'is-some' : ''}`}
+                    title={`Week of ${dateShort(w.weekStart)}: ${w.count} sessions`}>
+                    {w.count}
+                  </span>
+                ))}
+              </div>
+              <p className="consist__note">
+                {streaks.training.trainedToday
+                  ? "Today's session is done. That's how it's built."
+                  : streaks.training.restToday
+                    ? 'Scheduled rest day — recovery keeps the streak going.'
+                    : `${streaks.weekly.hit} of the last 8 weeks on target.`}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ============================================================
+          4 — PROGRESS. Two numbers that have actually moved, or
+          nothing at all. A dashboard of zeroes is worse than a
+          screen that waits until it has something to say.
+          ============================================================ */}
+      {(weightTrend || weekVolume > 0) && (
+        <section className="mcard">
+          <div className="mcard__head">
+            <h2 className="mcard__title">Recent progress</h2>
+            <button className="mcard__link" onClick={() => nav('/member/progress')}>
+              Details <Icon name="arrowRight" size={13} />
+            </button>
+          </div>
+          <div className="progrow">
+            {weightTrend && latest && (
+              <div className="progrow__item">
+                <span className="progrow__label">Body weight</span>
+                <span className="progrow__value u-num">{latest.weightKg} kg</span>
+                <span className={`progrow__delta ${weightTrend.delta === 0 ? '' : weightTrend.delta > 0 ? 'is-up' : 'is-down'}`}>
+                  {weightTrend.delta === 0
+                    ? 'Holding steady'
+                    : `${weightTrend.delta > 0 ? '+' : ''}${weightTrend.delta.toFixed(1)} kg since ${dateShort(weightTrend.since)}`}
+                </span>
+              </div>
+            )}
+            {weekVolume > 0 && (
+              <div className="progrow__item">
+                <span className="progrow__label">Volume, last 7 days</span>
+                <span className="progrow__value u-num">
+                  {Math.round(weekVolume).toLocaleString('en-IN')} kg
+                </span>
+                <span className="progrow__delta">
+                  {streaks.sessionsThisMonth} sessions this month
+                </span>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ---- 5 — Quick actions ---- */}
       <section>
         <h2 className="t-label u-mb-3">Quick actions</h2>
         <div className="quickgrid">
@@ -397,47 +458,23 @@ export default function MemberHome() {
         </div>
       </section>
 
-      {/* ---- This week ---- */}
-      <Card>
-        <CardHead
-          title="This week"
-          subtitle={`${streaks.weekly.series[streaks.weekly.series.length - 1]?.count ?? 0} of ${streaks.weeklyTarget} sessions`}
-          action={<Button size="sm" variant="ghost" iconRight="arrowRight" onClick={() => nav('/member/progress')}>Progress</Button>}
-        />
-        <CardBody>
-          <div className="u-row u-gap-2" style={{ marginBottom: 'var(--s-4)' }}>
-            {streaks.weekly.series.slice(-8).map((w) => (
-              <div key={w.weekStart} className="u-grow" title={`Week of ${dateShort(w.weekStart)}: ${w.count} sessions`}>
-                <div
-                  style={{
-                    height: 34, borderRadius: 5,
-                    background: w.hit ? 'var(--brand)' : w.count > 0 ? 'var(--surface-inset)' : 'var(--surface-3)',
-                    opacity: w.count === 0 ? 0.6 : 1,
-                    display: 'grid', placeItems: 'center',
-                    color: w.hit ? 'var(--brand-ink)' : 'var(--text-3)',
-                    fontSize: 'var(--fs-11)', fontWeight: 640,
-                  }}
-                >
-                  {w.count}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="u-between t-xs t-faint">
-            <span>8 weeks ago</span>
-            <span>This week</span>
-          </div>
+      {/* ============================================================
+          6 — MEMBERSHIP. Once.
 
-          {weekVolume > 0 && (
-            <div className="u-between u-mt-5 t-sm">
-              <span className="t-muted">Volume lifted, last 7 days</span>
-              <span className="u-num" style={{ fontWeight: 620 }}>
-                {Math.round(weekVolume).toLocaleString('en-IN')} kg
-              </span>
-            </div>
-          )}
-        </CardBody>
-      </Card>
+          This used to be three stacked alerts — a countdown, a
+          balance and a paid-of-billed line — each shouting at the
+          same volume, above the training. They are one fact about
+          one membership, so they are one strip, and it only raises
+          its voice when the situation has actually changed.
+          ============================================================ */}
+      <MembershipStrip
+        planName={membership?.planNameSnapshot ?? null}
+        endDate={membership?.endDate ?? null}
+        status={status}
+        daysLeft={daysLeft}
+        dues={dues}
+        onOpen={() => nav('/member/profile')}
+      />
 
       {(news.length > 0 || platformNews.length > 0) && (
         <Card>
@@ -468,18 +505,75 @@ export default function MemberHome() {
         </Card>
       )}
 
-      {/* ---- Membership, quietly, at the bottom where it belongs ---- */}
-      {membership && status === 'active' && (
-        <p className="quiet-note u-center">
-          {membership.planNameSnapshot} · active until {dateShort(membership.endDate)}
-          {' · '}
-          <button className="auth__link" onClick={() => nav('/member/profile')} style={{ fontSize: 'inherit' }}>
-            details
-          </button>
-        </p>
-      )}
-
       {weighIn && <RecordWeightSheet onClose={() => setWeighIn(false)} />}
     </div>
+  );
+}
+
+/* ============================================================
+   ONE membership area.
+
+   Four situations, one shape, and the loudest thing it will ever
+   do is turn amber. Everything it knows is already derived (§5) —
+   `status`, `daysLeft` and `dues` all come from `members.get`, so
+   this component holds no state and cannot disagree with the
+   Profile screen about what is owed.
+   ============================================================ */
+function MembershipStrip({
+  planName, endDate, status, daysLeft, dues, onOpen,
+}: {
+  planName: string | null;
+  endDate: string | null;
+  status: string;
+  daysLeft: number;
+  dues: { due: number; paid: number; billed: number };
+  onOpen: () => void;
+}) {
+  if (!planName) return null;
+
+  const owes = dues.due > 0;
+  const tone = status === 'expired' ? 'critical' : (status === 'expiring' || owes) ? 'warn' : 'calm';
+
+  // The headline is whichever fact is most urgent. It is never two
+  // facts: a member who is both overdue and expiring is told about
+  // the expiry, because that is the one with a deadline on it.
+  const headline = status === 'expired' ? 'Membership expired'
+    : status === 'expiring'
+      ? (daysLeft === 0 ? 'Renews today' : `Renews in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`)
+      : owes ? `${money(dues.due)} outstanding`
+        : `Active until ${endDate ? dateShort(endDate) : '—'}`;
+
+  const detail = status === 'expired'
+    ? `Ended ${endDate ? relativeDay(endDate).toLowerCase() : 'recently'}. Renew at the studio to start training again.`
+    : owes
+      ? `${money(dues.paid)} of ${money(dues.billed)} paid${status === 'expiring' ? ' · renewal due' : ''}.`
+      : null;
+
+  // A healthy membership is a footnote, not a card.
+  if (tone === 'calm') {
+    return (
+      <p className="quiet-note u-center">
+        {planName} · {headline}
+        {' · '}
+        <button className="auth__link" onClick={onOpen} style={{ fontSize: 'inherit' }}>details</button>
+      </p>
+    );
+  }
+
+  return (
+    <section className={`memstrip memstrip--${tone}`}>
+      <span className="memstrip__icon">
+        <Icon name={status === 'expired' ? 'alert' : owes ? 'wallet' : 'clock'} size={16} />
+      </span>
+      <span className="memstrip__text">
+        <span className="memstrip__head">{headline}</span>
+        <span className="memstrip__sub">
+          {planName}{detail ? ` · ${detail}` : ''}
+        </span>
+      </span>
+      <Button size="sm" onClick={onOpen}>
+        {status === 'expired' ? 'Renew' : owes ? 'Pay' : 'Details'}
+      </Button>
+    </section>
   );
 }

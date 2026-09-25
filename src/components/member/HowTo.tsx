@@ -51,11 +51,15 @@
        becomes "the set inputs are below the fold".
    ============================================================ */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { effortFrameOf } from '../../data/media/poses3d';
 import {
   FIGURE_VIEWBOX, effortIndex, motionBetween, resolvePose,
   type MovementDrawing, type PatternFrame, type PropGlyph, type SceneGlyph,
 } from '../../data/media/figure';
 import { Figure, MotionArrow, Prop, Scene, anchorFor } from './Figure';
+import { Arrow3D, Figure3D, cameraFor } from './Figure3D';
+import type { Region } from '../../data/media/figure3d';
+import type { Model3DDrawing } from '../../data/media/poses3d';
 
 /** How much room the demonstration gets. Never a fluid value. */
 export type HowToSize = 'hero' | 'player' | 'compact';
@@ -122,13 +126,16 @@ const Frame = memo(function Frame({
  * of the effort frame already answers "which movement is this?".
  */
 export const PoseThumb = memo(function PoseThumb({
-  drawing, prop, scene, label,
+  drawing, prop, scene, label, model,
 }: {
   drawing: MovementDrawing;
   prop: PropGlyph;
   scene: SceneGlyph;
   label?: string;
+  /** Where a 3D demonstration exists, the still comes from that instead. */
+  model?: Model3DDrawing | null;
 }) {
+  if (model) return <Model3DThumb model={model} label={label} />;
   const frame = drawing.frames[effortIndex(drawing)] ?? drawing.frames[0];
   return (
     <svg viewBox={FIGURE_VIEWBOX} className="posethumb" role="img"
@@ -138,8 +145,23 @@ export const PoseThumb = memo(function PoseThumb({
   );
 });
 
+/** One still 3D frame. No timer, no muscle tint — a list is not a lesson. */
+const Model3DThumb = memo(function Model3DThumb({
+  model, label,
+}: { model: Model3DDrawing; label?: string }) {
+  const camera = useMemo(() => cameraFor(model.frames.map((f) => f.pose), model.rig), [model]);
+  const frame = model.frames[effortFrameOf(model)] ?? model.frames[0];
+  return (
+    <svg viewBox={FIGURE_VIEWBOX} className="posethumb" role="img"
+      aria-label={label ?? `${model.name} demonstration`}>
+      <Figure3D pose={frame.pose} rig={model.rig} camera={camera} />
+    </svg>
+  );
+});
+
 export function HowTo({
   drawing, prop, scene, size = 'player', paused = false, showPhases = true,
+  model = null, primary, secondary,
 }: {
   drawing: MovementDrawing;
   prop: PropGlyph;
@@ -148,12 +170,29 @@ export function HowTo({
   /** Stop the timer without unmounting — used while a set is being typed. */
   paused?: boolean;
   showPhases?: boolean;
+  /**
+   * The premium 3D demonstration, where the exercise has one. The
+   * timing, the phase caption, the reduced-motion strip and the
+   * screen-reader description are all SHARED with the flat figure
+   * rather than reimplemented — the model changes what is inside
+   * the stage, and nothing else about how a demonstration behaves.
+   */
+  model?: Model3DDrawing | null;
+  /** Body regions to light up on the 3D model. */
+  primary?: ReadonlySet<Region>;
+  secondary?: ReadonlySet<Region>;
 }) {
   const reduced = usePrefersReducedMotion();
   const [frame, setFrame] = useState(0);
   const timer = useRef<number | undefined>(undefined);
 
-  const frames = drawing.frames;
+  const camera = useMemo(
+    () => (model ? cameraFor(model.frames.map((f) => f.pose), model.rig) : null),
+    [model],
+  );
+  // One list of phases whichever renderer is in the stage.
+  const frames: Array<{ label: string; cue?: string; holdMs?: number }> =
+    model ? model.frames : drawing.frames;
 
   /**
    * "One rep" is everything after the setup frame. Derived rather
@@ -199,18 +238,31 @@ export function HowTo({
   // actually define a repetition; the frames between them are the
   // animation's business. The sheet still gets every frame.
   if (reduced) {
-    const strip = size === 'hero' || frames.length < 3
-      ? frames
-      : [frames[0], frames[effortIndex(drawing)]].filter((f, i, a) => a.indexOf(f) === i);
+    const effort = model ? effortFrameOf(model) : effortIndex(drawing);
+    const indices = size === 'hero' || frames.length < 3
+      ? frames.map((_, i) => i)
+      : [...new Set([0, effort])];
+    const strip = indices.map((i) => frames[i]);
     return (
       <figure className={`howto howto--${size} howto--strip`}>
         <div className="howto__row">
           {strip.map((f, i) => (
             <div key={f.label + i} className="howto__cell">
               <svg viewBox={FIGURE_VIEWBOX} className="howto__svg" role="img"
-                aria-label={`${drawing.name}, ${f.label}`}>
-                <Frame drawing={drawing} frame={f} prop={prop} scene={scene}
-                  ghost={i > 0 ? strip[i - 1] : null} arrow />
+                aria-label={`${model?.name ?? drawing.name}, ${f.label}`}>
+                {model && camera ? (
+                  <>
+                    <Figure3D pose={model.frames[indices[i]].pose} rig={model.rig} camera={camera}
+                      primary={primary} secondary={secondary} />
+                    {i > 0 && (
+                      <Arrow3D from={model.frames[indices[i - 1]].pose}
+                        to={model.frames[indices[i]].pose} camera={camera} />
+                    )}
+                  </>
+                ) : (
+                  <Frame drawing={drawing} frame={drawing.frames[indices[i]]} prop={prop} scene={scene}
+                    ghost={i > 0 ? drawing.frames[indices[i - 1]] : null} arrow />
+                )}
               </svg>
               <span className="howto__steplabel">{f.label}</span>
             </div>
@@ -225,8 +277,23 @@ export function HowTo({
   }
 
   const current = frames[frame] ?? frames[0];
-  const previous = frames.length > 1 ? frames[(frame - 1 + frames.length) % frames.length] : null;
+  const prevIndex = (frame - 1 + frames.length) % frames.length;
+  const previous = frames.length > 1 ? frames[prevIndex] : null;
   const hold = current.holdMs ?? 700;
+
+  const stage = model && camera ? (
+    <>
+      <Figure3D pose={model.frames[frame].pose} rig={model.rig} camera={camera}
+        primary={primary} secondary={secondary} />
+      {frames.length > 1 && (
+        <Arrow3D from={model.frames[prevIndex].pose} to={model.frames[frame].pose} camera={camera} />
+      )}
+    </>
+  ) : (
+    <Frame drawing={drawing} frame={drawing.frames[frame] ?? drawing.frames[0]}
+      prop={prop} scene={scene}
+      ghost={previous ? drawing.frames[prevIndex] ?? null : null} arrow />
+  );
 
   // The teaching sheet explains; the player demonstrates. Only the
   // sheet gets the strip, the per-frame cue and the rep summary.
@@ -236,9 +303,8 @@ export function HowTo({
     <figure className={`howto howto--${size}`}>
       <div className="howto__stage">
         <svg viewBox={FIGURE_VIEWBOX} className="howto__svg" role="img"
-          aria-label={`${drawing.name} demonstration, ${current.label}`}>
-          <Frame drawing={drawing} frame={current} prop={prop} scene={scene}
-            ghost={previous} arrow />
+          aria-label={`${model?.name ?? drawing.name} demonstration, ${current.label}`}>
+          {stage}
         </svg>
 
         {/* The phase, ON the picture. It costs no layout height, it

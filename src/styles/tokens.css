@@ -81,6 +81,43 @@
      thing a member scanning the picture should find first. */
   --fig-load:       var(--accent);
 
+  /* ---- The 3D demonstration ----
+     Three stops per material — a lit side, a body colour and a
+     shadow side — because every volume is shaded along its own
+     axis and a flat fill would undo the whole renderer.
+     The figure keeps its own palette (it is a rendered object,
+     not typography); the LOAD keeps --accent, which is the same
+     decision the 2D figure made: the plates are the thing the
+     member earns against. */
+  --m3d-stage:      #e8e4dc;
+  --m3d-stage-2:    #d9d3c7;
+  --m3d-skin-hi:    #fbf8f3;
+  --m3d-skin:       #ddd5c8;
+  --m3d-skin-lo:    #a89e8d;
+  --m3d-steel-hi:   #f2f1ee;
+  --m3d-steel:      #c3c1bb;
+  --m3d-steel-lo:   #85837d;
+  --m3d-load-hi:    #d79a4a;
+  --m3d-load:       #b9772a;
+  --m3d-load-lo:    #7d4d16;
+  --m3d-frame-hi:   #b9b4aa;
+  --m3d-frame:      #97917f;
+  --m3d-frame-lo:   #6a6559;
+  --m3d-pad-hi:     #a8a49d;
+  --m3d-pad:        #8b8781;
+  --m3d-pad-lo:     #625f59;
+  --m3d-floor-hi:   #cfc9bb;
+  --m3d-floor:      #bdb6a6;
+  --m3d-floor-lo:   #a49c8a;
+  --m3d-cable-hi:   #6f6b63;
+  --m3d-cable:      #6f6b63;
+  --m3d-cable-lo:   #6f6b63;
+  --m3d-edge:       rgba(58, 52, 42, 0.38);
+  --m3d-far:        #cfc7b8;
+  --m3d-ghost:      rgba(70, 63, 52, 0.34);
+  --m3d-shade:      #6a604e;
+  --m3d-shadow:     rgba(70, 63, 52, 0.17);
+
   /* ---- The muscle chart ----
      Anatomical red, and NOT --guide, which this used to borrow.
      Two reasons, both learned from looking at the screen:
@@ -208,6 +245,35 @@
   --fig-pad:        #3b3c42;
   --fig-stack:      #45464d;
   --fig-load:       var(--accent);
+
+  --m3d-stage:      #24262b;
+  --m3d-stage-2:    #1c1e22;
+  --m3d-skin-hi:    #6f7581;
+  --m3d-skin:       #4c515b;
+  --m3d-skin-lo:    #2f333b;
+  --m3d-steel-hi:   #9aa0aa;
+  --m3d-steel:      #6f757f;
+  --m3d-steel-lo:   #454a53;
+  --m3d-load-hi:    #d9a052;
+  --m3d-load:       #a9762f;
+  --m3d-load-lo:    #6c4a19;
+  --m3d-frame-hi:   #5d626b;
+  --m3d-frame:      #464b53;
+  --m3d-frame-lo:   #31353c;
+  --m3d-pad-hi:     #3f444d;
+  --m3d-pad:        #2f343b;
+  --m3d-pad-lo:     #21252b;
+  --m3d-floor-hi:   #33373e;
+  --m3d-floor:      #2b2f35;
+  --m3d-floor-lo:   #23262c;
+  --m3d-cable-hi:   #8c929c;
+  --m3d-cable:      #8c929c;
+  --m3d-cable-lo:   #8c929c;
+  --m3d-edge:       rgba(10, 12, 15, 0.5);
+  --m3d-far:        #282b31;
+  --m3d-ghost:      rgba(180, 190, 205, 0.26);
+  --m3d-shade:      #0b0d11;
+  --m3d-shadow:     rgba(0, 0, 0, 0.32);
 
   --muscle-body:      #2c2d33;
   --muscle-body-line: #3e3f46;

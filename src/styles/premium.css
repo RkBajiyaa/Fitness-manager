@@ -104,7 +104,7 @@
    studio without hydration tracking must not get a hole in the row. */
 .ringrow {
   display: grid; gap: var(--s-3);
-  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(66px, 1fr));
 }
 .ringcell {
   display: flex; flex-direction: column; align-items: center; gap: var(--s-2);
@@ -115,7 +115,8 @@
 }
 .ringcell:hover { border-color: var(--border-strong); transform: translateY(-1px); }
 .ringcell__label { font-size: var(--fs-11); font-weight: 560; color: var(--text-2); }
-.ringcell__value { font-size: var(--fs-13); font-weight: 620; }
+.ringcell__value { font-size: var(--fs-13); font-weight: 620;   font-size: var(--fs-11); line-height: 1.3;
+}
 
 /* ==========================================================
    Member hero — consistency, not expiry
@@ -182,6 +183,160 @@
 .exline__name { font-size: var(--fs-14); font-weight: 540; }
 .exline--done .exline__name { color: var(--text-3); text-decoration: line-through; }
 .exline__target { font-size: var(--fs-12); color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* ==========================================================
+   MEMBER HOME — the fitness-first hierarchy
+
+   Today's workout is the only element on this screen allowed to
+   be this loud. Everything below it steps down in weight, and
+   membership steps down furthest of all.
+   ========================================================== */
+.mgreet {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3);
+  font-size: var(--fs-15); font-weight: 620; letter-spacing: -0.01em; margin: 0;
+}
+.mgreet span {
+  font-size: var(--fs-12); font-weight: 520; color: var(--text-3);
+  text-transform: capitalize; flex: none;
+}
+
+/* ---- 1. the hero ---- */
+.todayhero {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-2);
+  padding: var(--s-4); display: flex; flex-direction: column; gap: var(--s-3);
+  position: relative; overflow: hidden;
+}
+/* A single hairline of state along the top. Enough to notice at a
+   glance, not enough to become a second headline. */
+.todayhero::before {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--brand);
+}
+.todayhero--done::before { background: var(--good); }
+.todayhero--rest::before { background: var(--series-1); }
+.todayhero--active::before { background: var(--accent); }
+
+.todayhero__state {
+  display: flex; align-items: baseline; gap: 7px;
+  font-size: var(--fs-11); font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.todayhero__state em {
+  font-style: normal; font-weight: 560; letter-spacing: 0.02em;
+  text-transform: none; color: var(--text-3); opacity: 0.85;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.todayhero__state em::before { content: '· '; }
+.todayhero--done .todayhero__state { color: var(--good); }
+.todayhero--active .todayhero__state { color: var(--accent-strong); }
+.todayhero__title {
+  font-size: var(--fs-24); font-weight: 680; letter-spacing: -0.025em;
+  margin: 2px 0 0; line-height: 1.15;
+}
+.todayhero__focus {
+  font-size: var(--fs-13); color: var(--text-2); margin: 4px 0 0; line-height: 1.45;
+}
+
+.todayhero__strip {
+  display: flex; gap: 6px; list-style: none; margin: 0; padding: 0;
+  overflow-x: auto; scrollbar-width: none;
+}
+.todayhero__strip::-webkit-scrollbar { display: none; }
+.todayhero__strip li { position: relative; flex: none; }
+.todayhero__strip li.is-done .exthumb { opacity: 0.45; }
+.todayhero__tick {
+  position: absolute; right: -3px; bottom: -3px; width: 17px; height: 17px;
+  border-radius: var(--r-full); display: grid; place-items: center;
+  background: var(--good); color: var(--brand-ink);
+  box-shadow: 0 0 0 2px var(--surface-1);
+}
+.todayhero__more {
+  flex: none; width: 46px; height: 46px; border-radius: var(--r-md);
+  display: grid; place-items: center; background: var(--surface-3);
+  color: var(--text-3); font-size: var(--fs-12); font-weight: 640;
+}
+.todayhero__meta {
+  font-size: var(--fs-12); color: var(--text-3); margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.todayhero__act { margin-top: 2px; }
+
+/* ---- the shared secondary card ---- */
+.mcard {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: var(--s-4);
+  display: flex; flex-direction: column; gap: var(--s-3);
+}
+.mcard__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }
+.mcard__title {
+  font-size: var(--fs-11); font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--text-3); margin: 0;
+}
+.mcard__link {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  background: none; border: 0; cursor: pointer; padding: 0;
+  font-size: var(--fs-12); font-weight: 600; color: var(--brand);
+}
+
+/* ---- 3. consistency ---- */
+.consist { display: flex; align-items: center; gap: var(--s-4); }
+.consist__streak {
+  flex: none; display: flex; align-items: baseline; gap: 5px;
+  padding-right: var(--s-4); border-right: 1px solid var(--border);
+}
+.consist__num {
+  font-size: var(--fs-34); font-weight: 700; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums; line-height: 1;
+}
+.consist__unit {
+  font-size: var(--fs-11); font-weight: 600; color: var(--text-3);
+  line-height: 1.15; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.consist__weeks { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.weekbars { display: flex; gap: 4px; }
+.weekbars__b {
+  flex: 1 1 0; min-width: 0; height: 28px; border-radius: 5px;
+  display: grid; place-items: center;
+  background: var(--surface-3); color: var(--text-3);
+  font-size: var(--fs-11); font-weight: 640; font-variant-numeric: tabular-nums;
+}
+.weekbars__b.is-some { background: var(--surface-inset); color: var(--text-2); }
+.weekbars__b.is-hit { background: var(--brand); color: var(--brand-ink); }
+.consist__note { font-size: var(--fs-12); color: var(--text-3); margin: 0; line-height: 1.4; }
+
+/* ---- 4. recent progress ---- */
+.progrow { display: flex; gap: var(--s-4); }
+.progrow__item { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.progrow__label { font-size: var(--fs-11); color: var(--text-3); font-weight: 560; }
+.progrow__value { font-size: var(--fs-20); font-weight: 680; letter-spacing: -0.02em; }
+.progrow__delta { font-size: var(--fs-12); color: var(--text-3); line-height: 1.35; }
+.progrow__delta.is-up { color: var(--series-2); }
+.progrow__delta.is-down { color: var(--series-1); }
+
+/* ---- 6. membership, once ---- */
+.memstrip {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-4); border-radius: var(--r-lg);
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+.memstrip--warn { background: var(--warning-soft); border-color: transparent; }
+.memstrip--critical { background: var(--critical-soft); border-color: transparent; }
+.memstrip__icon { flex: none; display: grid; place-items: center; color: var(--text-3); }
+.memstrip--warn .memstrip__icon { color: var(--warning); }
+.memstrip--critical .memstrip__icon { color: var(--critical); }
+.memstrip__text { flex: 1 1 auto; min-width: 0; }
+.memstrip__head { display: block; font-size: var(--fs-13); font-weight: 620; }
+.memstrip__sub {
+  display: block; font-size: var(--fs-12); color: var(--text-2); margin-top: 2px;
+  line-height: 1.4;
+}
+
+@media (max-width: 380px) {
+  .consist { gap: var(--s-3); }
+  .consist__streak { padding-right: var(--s-3); }
+  .weekbars__b { font-size: 10px; }
+}
 
 /* ==========================================================
    Session player
@@ -500,7 +655,13 @@
 }
 .howto__svg { display: block; width: 100%; height: 100%; }
 
-.howto--player .howto__stage { width: min(100%, 180px); border-radius: var(--r-md); }
+/* The stage's width has to live on the FIGURE, not on the stage:
+   inside a shrink-to-fit flex item, `width: min(100%, 180px)` on a
+   child resolves against a parent that is itself sizing to its
+   content, and the whole demonstration collapses to whatever an
+   SVG's intrinsic width happens to be. */
+.howto--player { width: 100%; }
+.howto--player .howto__stage { width: 100%; border-radius: var(--r-md); }
 .howto--compact .howto__stage { width: min(100%, 128px); border-radius: var(--r-md); }
 
 /* ---- the phase, ON the picture ----
@@ -530,6 +691,59 @@
   transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 .howto__dots i.is-now { background: #fff; transform: scale(1.35); }
+
+/* ==========================================================
+   THE 3D DEMONSTRATION
+
+   Every volume arrives with its own gradient already aimed along
+   the light; this stylesheet only supplies the materials, the
+   contour and the depth wash.
+   ========================================================== */
+.m3d { display: block; width: 100%; height: 100%; }
+.m3d__part > path:first-child {
+  stroke: var(--m3d-edge); stroke-width: 0.4; stroke-linejoin: round;
+}
+.m3d__part--cable > path:first-child {
+  fill: none; stroke: var(--m3d-cable); stroke-width: 0.7; stroke-linecap: round;
+}
+.m3d__part--floor > path:first-child { stroke: none; }
+
+/* Brightness, as an overlay rather than as transparency. */
+.m3d__shade { fill: var(--m3d-shade); stroke: none; pointer-events: none; }
+
+/* Perspective at this size is far too weak to say which arm is
+   nearer, so depth is carried by colour as well. Without it a
+   pull-up is one blob with four limbs somewhere inside it. A wash
+   toward the background, not a filter: filters are the slowest
+   thing an SVG can ask for and this figure animates. */
+/* Only the BODY fades with distance. Washing the equipment the
+   same way turned a far weight plate the colour of the background
+   and a near one the colour of nothing — the kit has to keep its
+   material, because "which of these is the barbell" is half of
+   what the drawing is for. */
+.m3d__depth { fill: var(--m3d-stage); opacity: 0.14; stroke: none; }
+.m3d__part--skin .m3d__depth { opacity: 0.34; }
+
+.m3d__muscle { stroke: none; }
+.m3d__muscle--primary { fill: var(--muscle-primary); opacity: 0.74; }
+.m3d__muscle--secondary { fill: var(--muscle-primary); opacity: 0.24; }
+
+.m3d__shadow { fill: var(--m3d-shadow); }
+
+/* Direction. --guide, not --accent: this points at the movement,
+   and accent in this product means achievement. */
+.m3d__arrow-line {
+  fill: none; stroke: var(--guide); stroke-width: 1.8; stroke-linecap: round;
+}
+.m3d__arrow-halo {
+  fill: none; stroke: var(--m3d-stage); stroke-width: 4.2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.m3d__arrow-head { fill: var(--guide); stroke: none; }
+.m3d__ghost path {
+  fill: none; stroke: var(--m3d-ghost); stroke-width: 0.7;
+  stroke-dasharray: 2.6 2.2; stroke-linejoin: round;
+}
 
 /* ---- the body ----
    Every shape is drawn twice: an INK pass (fill + a fat stroke,
@@ -630,7 +844,7 @@
    Without this the cells have no basis to share and collapse to
    thumbnails — a member who has asked for less motion got the least
    readable demonstration in the product. */
-.howto--player.howto--strip .howto__row { width: min(100%, 180px); margin-inline: auto; }
+.howto--player.howto--strip .howto__row { width: 100%; margin-inline: auto; }
 .howto--strip .howto__cell { flex: 1 1 0; min-width: 0; }
 .howto--strip .howto__svg {
   background: var(--fig-stage); border-radius: var(--r-md); aspect-ratio: 1 / 1; height: auto;
@@ -659,8 +873,7 @@
 
 @media (max-width: 380px) {
   .howto__stage { width: min(100%, 256px); }
-  .howto--player .howto__stage { width: min(100%, 164px); }
-  .howto--player.howto--strip .howto__row { width: min(100%, 164px); }
+  .howto--player.howto--strip .howto__row { width: 100%; }
 }
 
 /* The member app is capped at 560px, so there is exactly one step up
@@ -668,8 +881,7 @@
    has a second fixed size — because a stage that tracks the viewport
    is how the set inputs end up below the fold. */
 @media (min-width: 480px) {
-  .howto--player .howto__stage { width: min(100%, 252px); }
-  .howto--player.howto--strip .howto__row { width: min(100%, 252px); }
+  .howto--player.howto--strip .howto__row { width: 100%; }
   .exteach { gap: var(--s-4); }
   .exteach__map .mmap--key.mmap--sm .mmap__svg { height: 204px; }
 }
@@ -961,8 +1173,24 @@
   display: flex; align-items: center; justify-content: center; gap: var(--s-3);
   padding: var(--s-3) var(--s-4) 0;
 }
-.exteach__vis { flex: 0 1 auto; min-width: 0; }
-.exteach__map { flex: 0 0 auto; }
+/* An explicit basis, not `auto`. The demonstration's own width is a
+   percentage of this box, and a percentage inside a shrink-to-fit
+   flex item resolves against nothing during intrinsic sizing — so
+   `auto` collapsed the stage to whatever an SVG's default width is
+   and the muscle chart ended up larger than the hero visual.
+
+   The sizes live HERE rather than beside the rest of the figure's
+   styles, because they have to come after the base rule to win —
+   a media query is not more specific, only later. */
+.exteach__vis { flex: 0 0 180px; min-width: 0; }
+/* The chart takes what is left and its caption wraps inside it. Sized
+   to its content it grows to fit "Spinal erectors, Glutes" on one
+   line and pushes the demonstration off the side of the card. */
+.exteach__map { flex: 1 1 0; min-width: 0; }
+.exteach__map .mmap { align-items: center; }
+
+@media (max-width: 400px) { .exteach__vis { flex-basis: 158px; } }
+@media (min-width: 480px) { .exteach__vis { flex-basis: 252px; } }
 
 /* At 360px the pair is 164 + 8 + 86 in a 296px card, which fits with
    room to spare — the chart does not need shrinking as well, and a
@@ -1141,19 +1369,20 @@
 
 /* Compact muscle chart — used beside the demonstration in the player,
    where the words live in the caption rather than a two-row key. */
+/* Inline, not flex. As a flex row the swatch is its own item and
+   wraps onto a line by itself the moment the names are long. */
 .mmap__caption {
-  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center;
-  column-gap: 6px; row-gap: 2px;
+  display: block; text-align: center;
   font-size: var(--fs-12); font-weight: 560; color: var(--text-2);
   text-align: center; line-height: 1.35; margin: 0;
 }
 .mmap__captionview {
-  font-size: var(--fs-11); font-weight: 680; letter-spacing: 0.05em;
-  text-transform: uppercase; color: var(--text-3);
+  display: block; font-size: var(--fs-11); font-weight: 680; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3); margin-bottom: 1px;
 }
-.mmap__captionnames {
-  display: flex; align-items: center; justify-content: center; gap: 5px;
-  flex-wrap: wrap;
+.mmap__captionnames { display: inline; }
+.mmap__captionnames .mmap__swatch {
+  display: inline-block; vertical-align: -1px; margin-right: 4px;
 }
 .mmap--sm .mmap__views { gap: var(--s-2); }
 .mmap--key { gap: var(--s-2); }
