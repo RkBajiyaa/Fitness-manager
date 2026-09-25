@@ -100,4 +100,13 @@ a:hover { text-decoration: underline; }
 @keyframes draw { from { stroke-dashoffset: var(--dash); } to { stroke-dashoffset: 0; } }
 @keyframes grow-y { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 
-.anim-page { animation: fade-up var(--dur-slow) var(--ease) both; }
+/* `backwards`, NOT `both`.
+   `both` holds the final keyframe forever, and that keyframe's
+   `transform: none` computes to an IDENTITY MATRIX rather than to
+   none — which makes this element the containing block for every
+   `position: fixed` descendant. The teaching sheet is a fixed
+   bottom sheet, so on a long scrolled list it aligned to the bottom
+   of the PAGE instead of the viewport and opened showing its own
+   middle. `backwards` keeps the pre-animation state (no flash on
+   entry) and lets the transform revert to none when it finishes. */
+.anim-page { animation: fade-up var(--dur-slow) var(--ease) backwards; }

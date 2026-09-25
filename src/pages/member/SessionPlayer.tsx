@@ -34,7 +34,7 @@ import { Icon } from '../../components/ui/Icon';
 import { HowTo } from '../../components/member/HowTo';
 import { ExerciseThumb } from '../../components/member/ExerciseThumb';
 import { MuscleMap } from '../../components/member/MuscleMap';
-import { regionsFor } from '../../components/member/Figure3D';
+import { muscleSets } from '../../data/media/anatomy';
 import { ExerciseTeaching } from '../../components/member/ExerciseTeaching';
 import { useApp, useData } from '../../state/app';
 import * as api from '../../lib/api';
@@ -576,6 +576,11 @@ function ExerciseCard({
   if (!session || !exercise) return null;
 
   const isWarmup = exercise.kind === 'warmup';
+  // One resolution of "what does this work", shared by the figure and
+  // the chart beside it, so the two cannot disagree (§16).
+  const marks = muscleSets(
+    exercise.primaryMuscles, exercise.secondaryMuscles, exercise.muscleGroup,
+  );
   const working = sets.filter((s) => s.kind !== 'warmup');
   const doneCount = sets.filter((s) => s.completed).length;
   const allDone = sets.length > 0 && doneCount === sets.length;
@@ -698,9 +703,7 @@ function ExerciseCard({
                   <HowTo key={howTo.drawing.key} drawing={howTo.drawing}
                     prop={howTo.prop} scene={howTo.scene} size="player"
                     paused={howToPaused}
-                    model={howTo.model}
-                    primary={regionsFor(exercise.primaryMuscles)}
-                    secondary={regionsFor(exercise.secondaryMuscles)} />
+                    primary={marks.primary} secondary={marks.secondary} />
                 </div>
               )}
               {!isWarmup && (

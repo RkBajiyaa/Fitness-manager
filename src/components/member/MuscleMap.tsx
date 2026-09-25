@@ -70,6 +70,16 @@ const Body = memo(function Body({ view }: { view: AnatomyView }) {
   const lines = DEFINITION[view];
   return (
     <>
+      {/* The figure's light, on the chart. Upper left, the same
+          direction every drawing in the product is lit from (§7):
+          two bodies lit from different sides are two products. */}
+      <defs>
+        <linearGradient id="mmapSkin" x1="0.1" y1="0" x2="0.95" y2="1">
+          <stop offset="0" className="fig2__g-lit" />
+          <stop offset="0.5" className="fig2__g-mid" />
+          <stop offset="1" className="fig2__g-core" />
+        </linearGradient>
+      </defs>
       <g className="mmap__bodyink">{all}</g>
       <g className="mmap__bodyfill">{all}</g>
       {/* Modelling, under the highlights: enough of a body that a

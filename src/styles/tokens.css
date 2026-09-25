@@ -69,13 +69,37 @@
           --text-1 for a body contour means a typography change
           silently redraws every exercise in the product. ---- */
   --fig-stage:      #e6e1d7;
+  --fig-stage-top:  #f7f4ee;
+  --fig-stage-base: #e2dbcd;
   --fig-ink:        #1b1d22;
-  --fig-skin:       #ffffff;
-  --fig-ink-far:    #b5b0a5;
-  --fig-skin-far:   #ded9cf;
+  --fig-ink-far:    #9d988c;
+  /* THREE skin stops, not one. Every volume is shaded across its own
+     bone against one light direction (§7), so a flat fill would undo
+     the renderer — and the far side is a fourth, fifth and sixth
+     rather than the near side at reduced opacity, because opacity as
+     a depth cue makes a far thigh show through a near one. */
+  --fig-lit:        #ffffff;
+  --fig-skin:       #f2ece1;
+  --fig-core:       #cec4ae;
+  --fig-lit-mid:    #f4efe6;
+  --fig-skin-mid:   #e7e1d5;
+  --fig-core-mid:   #c5bba7;
+  --fig-ink-mid:    #494540;
+  --fig-lit-far:    #ddd8cd;
+  --fig-skin-far:   #d0cabc;
+  --fig-core-far:   #b2aa98;
+  /* Modelling and line work. Used at low opacity: this is anatomy
+     being suggested, not a textbook plate (§2). */
+  --fig-model:      #b0a795;
+  --fig-line:       #8b8474;
+  --fig-hair:       #4a4238;
+  --fig-face:       #6b6456;
+  --fig-contact:    #1b1d22;
   --fig-ghost:      rgba(27, 29, 34, 0.17);
   --fig-kit:        #a29c8f;
+  --fig-kit-lit:    #c3bdb0;
   --fig-pad:        #c6c0b3;
+  --fig-pad-lit:    #dcd6c9;
   --fig-stack:      #b1ab9e;
   /* The implement keeps --accent: it IS the load, and it is the
      thing a member scanning the picture should find first. */
@@ -236,13 +260,30 @@
   --guide-wash:     rgba(128, 152, 255, 0.10);
 
   --fig-stage:      #202126;
-  --fig-ink:        #0c0d10;
-  --fig-skin:       #c8c5bf;
-  --fig-ink-far:    #2e2f35;
-  --fig-skin-far:   #55565d;
+  --fig-stage-top:  #282a30;
+  --fig-stage-base: #191a1e;
+  --fig-ink:        #0a0b0e;
+  --fig-ink-far:    #26272c;
+  --fig-lit:        #dcd8d0;
+  --fig-skin:       #b4b0a8;
+  --fig-core:       #7c7972;
+  --fig-lit-mid:    #c3bfb8;
+  --fig-skin-mid:   #9e9b94;
+  --fig-core-mid:   #6d6a64;
+  --fig-ink-mid:    #131418;
+  --fig-lit-far:    #6d6d72;
+  --fig-skin-far:   #5b5b60;
+  --fig-core-far:   #45454a;
+  --fig-model:      #6a665e;
+  --fig-line:       #57544d;
+  --fig-hair:       #23201c;
+  --fig-face:       #46433c;
+  --fig-contact:    #000000;
   --fig-ghost:      rgba(241, 240, 238, 0.22);
   --fig-kit:        #4c4d54;
+  --fig-kit-lit:    #62636b;
   --fig-pad:        #3b3c42;
+  --fig-pad-lit:    #4c4d55;
   --fig-stack:      #45464d;
   --fig-load:       var(--accent);
 

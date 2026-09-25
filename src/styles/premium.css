@@ -745,62 +745,163 @@
   stroke-dasharray: 2.6 2.2; stroke-linejoin: round;
 }
 
-/* ---- the body ----
-   Every shape is drawn twice: an INK pass (fill + a fat stroke,
-   which grows the silhouette by half a stroke) and a SKIN pass
-   over it. The union gets one clean contour and every internal
-   seam — hip to torso, shin to thigh — disappears. Stroking the
-   shapes individually instead draws a line across every joint. */
-.fig__ink path {
+/* ============================================================
+   THE FIGURE (§1–§9, §28)
+
+   One stroke weight, one light direction, one palette, for every
+   exercise in the library. That is what "the same product" means and
+   it is the reason none of this lives on a per-drawing basis.
+
+   `--fig-u` is the drawing's scale: the composed viewBox is sized to
+   the body (§17), so a hero at 46 units and a thumbnail at 78 would
+   otherwise get visibly different line weights. Every stroke below is
+   a multiple of it, which makes the outline a constant fraction of
+   the FIGURE rather than of the box it happens to be in.
+   ============================================================ */
+
+/* ---- silhouette ----
+   Each limb chain is drawn twice: an INK pass (fill + a fat stroke,
+   which grows every shape by half a stroke) and a FORM pass over it.
+   The union gets one clean contour and every internal seam — hip to
+   torso, shin to thigh — disappears. Stroking the shapes individually
+   instead draws a line across every joint: a person made of sausages. */
+.fig2__ink path {
   fill: var(--fig-ink);
   stroke: var(--fig-ink);
-  stroke-width: 2.2;
+  stroke-width: calc(1.25 * var(--fig-u, 1));
   stroke-linejoin: round;
 }
-.fig__skin path { fill: var(--fig-skin); stroke: none; }
-.fig__ink--far path { fill: var(--fig-ink-far); stroke: var(--fig-ink-far); }
-.fig__skin--far path { fill: var(--fig-skin-far); }
+.fig2__part--mid .fig2__ink path { fill: var(--fig-ink-mid); stroke: var(--fig-ink-mid); }
+.fig2__part--far .fig2__ink path { fill: var(--fig-ink-far); stroke: var(--fig-ink-far); }
+.fig2__form path { stroke: none; fill: var(--fig-skin); }
+.fig2__part--mid .fig2__form path { fill: var(--fig-skin-mid); }
+.fig2__part--far .fig2__form path { fill: var(--fig-skin-far); }
 
-/* The position being moved AWAY from.
-   Outline only — a second solid body reads as two people — and
-   DASHED, because a thin continuous outline reads as an object in
-   the scene. A dash is the universal "this is not really here". */
-.fig__ghost path {
-  fill: none;
-  stroke: var(--fig-ghost);
-  stroke-width: 1.8;
-  stroke-linejoin: round;
-  stroke-dasharray: 3.5 3;
+/* ---- form ----
+   Three stops across the bone. Lit, body, core shadow. The endpoints
+   are computed per volume per frame in `Figure.tsx`, so a limb that
+   swings overhead relights itself. */
+.fig2__g-lit { stop-color: var(--fig-lit); }
+.fig2__g-mid { stop-color: var(--fig-skin); }
+.fig2__g-core { stop-color: var(--fig-core); }
+.fig2__g--mid .fig2__g-lit { stop-color: var(--fig-lit-mid); }
+.fig2__g--mid .fig2__g-mid { stop-color: var(--fig-skin-mid); }
+.fig2__g--mid .fig2__g-core { stop-color: var(--fig-core-mid); }
+.fig2__g--far .fig2__g-lit { stop-color: var(--fig-lit-far); }
+.fig2__g--far .fig2__g-mid { stop-color: var(--fig-skin-far); }
+.fig2__g--far .fig2__g-core { stop-color: var(--fig-core-far); }
+
+.fig2__headfill { fill: var(--fig-skin); }
+.fig2__hair { fill: var(--fig-hair); stroke: none; }
+.fig2__ear { fill: none; stroke: var(--fig-line); stroke-width: calc(0.5 * var(--fig-u, 1)); }
+.fig2__face {
+  fill: none; stroke: var(--fig-face);
+  stroke-width: calc(0.62 * var(--fig-u, 1));
   stroke-linecap: round;
 }
 
-/* ---- direction ----
-   --guide, not --accent: this points at the movement, and accent
-   in this product means achievement. */
-.fig__arrow > path { stroke: var(--guide); stroke-width: 2.6; stroke-linecap: round; fill: none; }
-.fig__arrowhead path { fill: var(--guide); stroke: none; }
-/* fill:none matters — the arrow's shaft is an OPEN curve, and filling
-   it paints the whole area under the arc as a solid blob. */
-.fig__arrow-halo path {
-  stroke: var(--fig-stage); stroke-width: 5.5; stroke-linecap: round;
-  stroke-linejoin: round; fill: none;
+/* ---- muscle ----
+   Modelling, not a diagram. The belly is the same shape the
+   activation uses, which is what makes a highlight incapable of
+   landing anywhere but on the muscle it names (§8). */
+.fig2__belly { fill: var(--fig-model); opacity: 0.2; stroke: none; }
+.fig2__part--mid .fig2__belly { opacity: 0.16; }
+.fig2__part--far .fig2__belly { opacity: 0.1; }
+.fig2__line {
+  fill: none; stroke: var(--fig-line); stroke-linecap: round; stroke-linejoin: round;
+}
+.fig2__line--fine { stroke-width: calc(0.42 * var(--fig-u, 1)); opacity: 0.6; }
+.fig2__line--firm { stroke-width: calc(0.6 * var(--fig-u, 1)); opacity: 0.8; }
+.fig2__part--mid .fig2__line { opacity: 0.46; }
+.fig2__part--far .fig2__line { opacity: 0.3; }
+
+/* ---- activation (§8, §9) ----
+   Anatomical red, the same red the muscle chart uses, because the
+   body and the map are one anatomical system and two reds would be
+   two systems. Primary and secondary differ in WEIGHT, never in hue:
+   no form of colour vision collapses that and it survives greyscale.
+   The opacity is set inline, from the movement's own geometry. */
+.fig2__act { stroke: none; }
+.fig2__act--primary { fill: var(--muscle-primary); }
+.fig2__act--secondary { fill: var(--muscle-primary); }
+.fig2__part--mid .fig2__act { opacity: 0.78 !important; }
+.fig2__part--far .fig2__act { opacity: 0.4 !important; }
+
+/* ---- the stage (§18) ---- */
+.fig2__stage-top { stop-color: var(--fig-stage-top); }
+.fig2__stage-base { stop-color: var(--fig-stage-base); }
+.fig2__contact { fill: var(--fig-contact); }
+.fig2__floorwash { fill: var(--fig-kit); opacity: 0.07; }
+.fig2__ground {
+  stroke: var(--fig-kit); stroke-width: calc(1.1 * var(--fig-u, 1)); opacity: 0.8;
 }
 
-/* ---- the load ---- */
-.fig__bar { stroke: var(--fig-load); stroke-width: 2.6; stroke-linecap: round; }
-.fig__bar-f { fill: var(--fig-load); }
-.fig__plate { fill: var(--fig-load); }
-.fig__cable { stroke: var(--fig-load); stroke-width: 1.5; stroke-linecap: round; }
-.fig__band { stroke: var(--fig-load); stroke-width: 2.2; stroke-linecap: round; }
+/* ---- the movement path (§14) ----
+   --guide, not --accent: this points at the movement, and accent in
+   this product means achievement. Drawn over a halo so it stays
+   legible where it crosses a limb. */
+.fig2__path {
+  fill: none; stroke: var(--guide);
+  stroke-width: calc(0.95 * var(--fig-u, 1));
+  stroke-linecap: round; stroke-dasharray: calc(2.6 * var(--fig-u, 1)) calc(2 * var(--fig-u, 1));
+  opacity: 0.85;
+}
+.fig2__pathhalo {
+  fill: none; stroke: var(--fig-stage-top);
+  stroke-width: calc(2.6 * var(--fig-u, 1));
+  stroke-linecap: round; opacity: 0.75;
+}
+.fig2__pathstart {
+  fill: none; stroke: var(--guide);
+  stroke-width: calc(0.7 * var(--fig-u, 1)); opacity: 0.8;
+}
+.fig2__pathtip { fill: var(--guide); stroke: none; }
 
-/* ---- the kit ---- */
-.fig__ground { stroke: var(--fig-kit); stroke-width: 1.6; }
-.fig__groundfill { fill: var(--fig-kit); opacity: 0.16; }
-.fig__frame { fill: var(--fig-kit); }
-.fig__frameline { stroke: var(--fig-kit); stroke-width: 2.4; stroke-linecap: round; }
-.fig__pad { fill: var(--fig-pad); }
-.fig__stack { fill: var(--fig-stack); }
-.fig__panel { fill: var(--fig-stack); }
+/* ---- the load ----
+   --accent is earned here and nowhere else in a drawing: the
+   implement IS the thing being lifted (§20). */
+.fig2__bar {
+  stroke: var(--fig-load); stroke-width: calc(1.9 * var(--fig-u, 1));
+  stroke-linecap: round;
+}
+.fig2__barlit {
+  stroke: #fff; stroke-width: calc(0.5 * var(--fig-u, 1));
+  stroke-linecap: round; opacity: 0.3;
+}
+.fig2__collar {
+  stroke: var(--fig-load); stroke-width: calc(1.2 * var(--fig-u, 1));
+  stroke-linecap: round; opacity: 0.85;
+}
+.fig2__plate { fill: var(--fig-load); }
+.fig2__platelit { fill: #fff; opacity: 0.22; }
+.fig2__cable {
+  stroke: var(--fig-kit); stroke-width: calc(0.8 * var(--fig-u, 1)); stroke-linecap: round;
+}
+.fig2__rope {
+  stroke: var(--fig-load); stroke-width: calc(1.2 * var(--fig-u, 1)); stroke-linecap: round;
+}
+.fig2__band {
+  stroke: var(--fig-load); stroke-width: calc(1.6 * var(--fig-u, 1)); stroke-linecap: round;
+}
+
+/* ---- the kit (§13) ---- */
+.fig2__frame { fill: var(--fig-kit); }
+.fig2__framelit { fill: var(--fig-kit-lit); }
+.fig2__frameline {
+  stroke: var(--fig-kit); stroke-width: calc(1.8 * var(--fig-u, 1)); stroke-linecap: round;
+}
+.fig2__pad { fill: var(--fig-pad); }
+.fig2__padlit { fill: var(--fig-pad-lit); }
+.fig2__padseam {
+  stroke: var(--fig-kit); stroke-width: calc(0.4 * var(--fig-u, 1)); opacity: 0.55;
+}
+.fig2__stack { fill: var(--fig-stack); }
+.fig2__stackline {
+  stroke: var(--fig-kit); stroke-width: calc(0.35 * var(--fig-u, 1)); opacity: 0.5;
+}
+.fig2__pulley { fill: none; stroke: var(--fig-kit); stroke-width: calc(1.2 * var(--fig-u, 1)); }
+.fig2__pulleyhub { fill: var(--fig-kit); }
+.fig2__behind { opacity: 0.55; }
 
 /* ---- phases ----
    The labels ARE the instruction. The bar under the live one runs
@@ -926,21 +1027,27 @@
 
 /* Modelling under the highlights. Hairlines, not shading: enough
    body that a muscle is findable before it is coloured in. */
+/* The chart is the SAME anatomical system as the figure (§16), so it
+   borrows the figure's ink, its skin and — crucially — its light.
+   A flat grey body beside a shaded one reads as an icon that happens
+   to be nearby; the same light in both says they are two views of one
+   person. The body is still authored in `anatomy.ts`: this is a
+   change of material, not of geometry. */
 .mmap__detail path {
-  fill: none; stroke: var(--muscle-detail);
-  stroke-width: 0.9; stroke-linecap: round;
+  fill: none; stroke: var(--fig-line);
+  stroke-width: 0.9; stroke-linecap: round; opacity: 0.66;
 }
 
 .mmap__bodyink > *,
 .mmap__bodyink g > * {
-  fill: var(--muscle-body-line);
-  stroke: var(--muscle-body-line);
-  stroke-width: 1.6;
+  fill: var(--fig-ink);
+  stroke: var(--fig-ink);
+  stroke-width: 1.4;
   stroke-linejoin: round;
 }
 .mmap__bodyfill > *,
 .mmap__bodyfill g > * {
-  fill: var(--muscle-body);
+  fill: url(#mmapSkin);
   stroke: none;
 }
 .mmap__region { stroke: none; }
@@ -1438,3 +1545,43 @@
 .player__howtoggle:hover { background: var(--surface-3); color: var(--text-1); }
 .player__howtoggle[aria-pressed='true'] { color: var(--text-2); }
 .player__howtoggle:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+/* ==========================================================
+   THE MISTAKE COMPARISON (§22)
+
+   Correct beside wrong, the same size, the same framing, one
+   sentence underneath. It lives in the teaching sheet and never in
+   the animation: a demonstration that cycles through a rounded back
+   is a demonstration teaching a rounded back.
+
+   The wrong one is marked with --critical on its LABEL and its
+   border, never by tinting the figure: a red person reads as a muscle
+   highlight, which is the one thing that colour already means here.
+   And the label carries the word as well as the colour, because
+   status colour never travels alone.
+   ========================================================== */
+.mistakes2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+.mistakes2__cell { margin: 0; min-width: 0; }
+.mistakes2__svg {
+  display: block; width: 100%; aspect-ratio: 1 / 1;
+  background: var(--fig-stage);
+  border-radius: var(--r-md);
+  border: 1.5px solid transparent;
+}
+.mistakes2__cell--ok .mistakes2__svg { border-color: var(--good); }
+.mistakes2__cell--bad .mistakes2__svg { border-color: var(--critical); }
+.mistakes2__cell figcaption {
+  display: block; text-align: center; margin-top: 4px;
+  font-size: var(--fs-11); font-weight: 650;
+}
+.mistakes2__cell--ok figcaption { color: var(--good); }
+.mistakes2__cell--bad figcaption { color: var(--critical); }
+.mistakes2__why {
+  grid-column: 1 / -1;
+  margin: 0; font-size: var(--fs-12); color: var(--text-2);
+}

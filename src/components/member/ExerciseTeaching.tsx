@@ -27,9 +27,9 @@
    ============================================================ */
 import { Badge } from '../ui/primitives';
 import { Icon } from '../ui/Icon';
-import { HowTo } from './HowTo';
+import { HowTo, MistakeCompare } from './HowTo';
 import { MuscleMap } from './MuscleMap';
-import { regionsFor } from './Figure3D';
+import { muscleSets } from '../../data/media/anatomy';
 import type { Exercise } from '../../lib/types';
 import type { ResolvedHowTo } from '../../lib/api';
 
@@ -71,6 +71,11 @@ export function ExerciseTeaching({
   labels: TeachingLabels;
   size?: 'hero' | 'player';
 }) {
+  /* One resolution of "what does this work", used by the figure and
+     the chart, so the body and the map can never disagree (§16). */
+  const marks = muscleSets(
+    exercise.primaryMuscles, exercise.secondaryMuscles, exercise.muscleGroup,
+  );
   const hasDetail = exercise.setup.length > 0 || exercise.steps.length > 0
     || exercise.mistakes.length > 0 || Boolean(exercise.breathing);
 
@@ -79,9 +84,7 @@ export function ExerciseTeaching({
       {howTo ? (
         <HowTo key={howTo.drawing.key} drawing={howTo.drawing}
           prop={howTo.prop} scene={howTo.scene} size={size}
-          model={howTo.model}
-          primary={regionsFor(exercise.primaryMuscles)}
-          secondary={regionsFor(exercise.secondaryMuscles)} />
+          primary={marks.primary} secondary={marks.secondary} />
       ) : (
         /* A member-authored exercise has no drawing, and borrowing a
            picture of a different movement would be worse than saying
@@ -155,9 +158,17 @@ export function ExerciseTeaching({
               </p>
             )}
 
-            {exercise.mistakes.length > 0 && (
+            {(exercise.mistakes.length > 0 || howTo?.drawing.mistake) && (
               <section className="exsheet__block">
                 <h3 className="exsheet__h">Common mistakes</h3>
+                {/* Where a drawing carries the classic error, it is shown
+                    beside the correct position rather than described (§22).
+                    It is never in the animation: a demonstration that
+                    cycles through a rounded back teaches a rounded back. */}
+                {howTo?.drawing.mistake && (
+                  <MistakeCompare drawing={howTo.drawing} prop={howTo.prop}
+                    scene={howTo.scene} />
+                )}
                 <ul className="exsheet__mistakes">
                   {exercise.mistakes.map((m, i) => (
                     <li key={i}><Icon name="x" size={13} strokeWidth={2.6} /><span>{m}</span></li>

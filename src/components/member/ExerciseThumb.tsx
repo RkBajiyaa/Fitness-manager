@@ -43,8 +43,7 @@ export function ExerciseThumb({
   }
   return (
     <span className={cls}>
-      <PoseThumb drawing={howTo.drawing} prop={howTo.prop} scene={howTo.scene}
-        model={howTo.model} label={name} />
+      <PoseThumb drawing={howTo.drawing} prop={howTo.prop} scene={howTo.scene} label={name} />
     </span>
   );
 }

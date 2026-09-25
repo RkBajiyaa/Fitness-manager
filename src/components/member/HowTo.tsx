@@ -1,68 +1,67 @@
 /* ============================================================
-   THE HOW-TO DEMONSTRATION (§12, §9).
+   THE HOW-TO DEMONSTRATION (§10, §11, §17, §19, §27).
 
-   Turns a `pose` ExerciseMedia record into an animated
-   demonstration. This is the only module that knows a drawing is
-   made of angles; every screen above it just hands over an
-   exercise id.
+   This module owns TIME. `Figure.tsx` owns what one instant looks
+   like; every screen above this just hands over an exercise id.
 
-   It teaches four things at once, and each one is a separate
-   decision:
+   ------------------------------------------------------------
+   IT IS NOT THREE PICTURES ANY MORE
 
-     WHAT THE BODY DOES   the posed figure, animated on the
-                          drawing's own timings so the effort
-                          phase is held and the return is quick.
-     WHICH WAY IT MOVES   a ghost of the previous position plus an
-                          arrow on the joint that actually
-                          travelled. A still frame cannot say
-                          "downwards", and a loop only says it to
-                          somebody who happened to be watching.
-     WHAT THE PHASES ARE  the name of the phase you are looking
-                          at, and how many there are. In the
-                          player this is a caption ACROSS THE
-                          BOTTOM OF THE STAGE, not a row of
-                          controls under it: the demonstration
-                          already shows the phases by running
-                          through them, and a strip of pills plus
-                          a cue plus a summary line was 133px of
-                          an exercise card that has to reach the
-                          set inputs. The full strip survives at
-                          `hero`, where explaining IS the job.
-     WHAT ONE REP IS      spelled out under the strip in the
-                          teaching sheet, because "how far do I
-                          go?" is a question a beginner cannot
-                          answer from a picture of a person
-                          part-way through a movement. It is not
-                          in the player: by then they have opened
-                          the sheet or they have not.
+   The old demonstration stepped from frame to frame: three stills in
+   sequence. That tells you the POSITIONS and nothing about the
+   movement — no direction while it is between them, no tempo, and no
+   sense that lowering a bar is controlled while pressing it is a
+   drive. §10 is explicit that this is the wrong shape.
 
-   Three things it still deliberately does NOT do:
+   So the frames are KEYS and the pose is interpolated. Four things
+   make that read as a person:
 
-     · It does not autoplay behind your back. The frame timer only
-       runs while the component is mounted, and the component is
-       only mounted for the ACTIVE exercise (§27) — opening a
-       workout with eight exercises animates one, not eight.
-     · It does not carry playback chrome. No scrubber, no sound,
-       no fullscreen. If the movement needs a control surface, the
-       drawing has failed.
-     · It does not grow without limit. `size` picks from three
-       fixed stages. A media block that scales with the viewport
-       is how "the visual is the primary information" quietly
-       becomes "the set inputs are below the fold".
+     · EASING, per frame. `smooth` on a controlled phase, `accel` out
+       of a bottom position, `decel` arriving somewhere, `settle` at a
+       lockout where a loaded bar genuinely overshoots and comes back.
+     · A DWELL at each key, so the working position is HELD rather
+       than passed through.
+     · TEMPO per drawing. A curl does not move like a squat (§19).
+     · ONE COMPOSED FRAME. The viewBox is computed from the drawing's
+       own extremes, once, over every key at the same time — so the
+       body fills the stage (§17) and cannot grow, shrink or drift
+       between phases.
+
+   ------------------------------------------------------------
+   AND IT STILL COSTS ALMOST NOTHING
+
+   One demonstration animates at a time — the ACTIVE exercise (§25) —
+   at a capped frame rate, and every list uses `PoseThumb`, which has
+   no timer at all. Opening a workout with eight exercises animates
+   one. The SVG is a few dozen paths and fifteen gradients; there is
+   no filter, no mask and no raster anywhere in it.
+
+   Three things it deliberately does NOT do: autoplay off screen,
+   carry playback chrome, or scale with the viewport. A media block
+   that grows with the window is how "the visual teaches the movement"
+   quietly becomes "the set inputs are below the fold".
    ============================================================ */
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { effortFrameOf } from '../../data/media/poses3d';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
-  FIGURE_VIEWBOX, effortIndex, motionBetween, resolvePose,
-  type MovementDrawing, type PatternFrame, type PropGlyph, type SceneGlyph,
+  buildTimeline, effortIndex, fitBoxOf, planFor, posePoints, resolvePose,
+  sampleTimeline, trajectory, travelJoint, viewBoxOf,
+  type FigureView, type JointName, type MovementDrawing, type PatternFrame,
+  type Pose, type PropGlyph, type SceneGlyph,
 } from '../../data/media/figure';
-import { Figure, MotionArrow, Prop, Scene, anchorFor } from './Figure';
-import { Arrow3D, Figure3D, cameraFor } from './Figure3D';
-import type { Region } from '../../data/media/figure3d';
-import type { Model3DDrawing } from '../../data/media/poses3d';
+import { activationFrom } from '../../data/media/musculature';
+import { Figure, MotionPath, farPoseFor, gripsOf } from './Figure';
+import { GROUND_Y, Prop, Scene, anchorFor, type Grip } from './Kit';
 
 /** How much room the demonstration gets. Never a fluid value. */
 export type HowToSize = 'hero' | 'player' | 'compact';
+
+/** ~30fps. Smooth for a vector figure, and a third of the work of 90. */
+const FRAME_MS = 33;
+
+/** How long one phase owns the loop, tempo included. */
+function budgetOf(drawing: MovementDrawing, i: number): number {
+  return (drawing.frames[i]?.holdMs ?? 700) * (drawing.tempoScale ?? 1);
+}
 
 /** True when the viewer has asked the OS for less motion. */
 function usePrefersReducedMotion(): boolean {
@@ -80,191 +79,338 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
+/* ============================================================
+   COMPOSITION
+
+   Everything that depends only on the DRAWING, computed once and
+   memoised on it: the plan, the frame, the trajectory, the range the
+   activation is measured against. None of it may depend on the
+   current time, or the figure would resize as it moved.
+   ============================================================ */
+
+interface Composition {
+  view: FigureView;
+  viewBox: string;
+  /**
+   * The composed box's size relative to the original 100-unit box.
+   *
+   * Every stroke in the stylesheet is a multiple of it. Framing to the
+   * body means a hero can be 46 units across and a thumbnail 78, and
+   * a fixed 1.7-unit contour would then be visibly heavier on one than
+   * the other — which is the exact kind of drift §28 is about.
+   */
+  unit: number;
+  joint: JointName | null;
+  path: Array<[number, number]>;
+  /** Furthest any sampled position gets from the working position. */
+  range: number;
+  effortAt: [number, number] | null;
+  effort: number;
+  holding: boolean;
+}
+
 /**
- * One frame, drawn. Shared by the animation, the reduced-motion
- * strip and the static thumbnail, so all three are guaranteed to
- * be the same picture.
+ * Scenery you HOLD ON TO.
+ *
+ * `prop` says what is in the hands, and for a pull-up or a dip the
+ * answer is "nothing" — the thing being gripped is part of the
+ * scenery. Without this the hands open and a pull-up is a person
+ * reaching past a bar with their fingers splayed (§4).
  */
-const Frame = memo(function Frame({
-  drawing, frame, prop, scene, ghost, arrow,
+const GRIP_SCENES: ReadonlySet<SceneGlyph> = new Set(['pull_bar', 'dip_bars']);
+
+/** Roughly how far an implement reaches past the hands, for framing. */
+function propReach(glyph: PropGlyph): number {
+  switch (glyph) {
+    case 'barbell': return 17;
+    case 'dumbbell': return 8;
+    case 'kettlebell': return 6;
+    case 'cable': case 'rope': case 'machine_handle': return 9;
+    default: return 3;
+  }
+}
+
+function compose(drawing: MovementDrawing, prop: PropGlyph, scene: SceneGlyph): Composition {
+  const plan = planFor(drawing.view);
+  const symmetry = drawing.symmetry ?? 'mirror';
+  const pts: Array<[number, number]> = [];
+
+  drawing.frames.forEach((f, i) => {
+    const partner = drawing.frames[(i + 1) % drawing.frames.length]?.pose;
+    const far = farPoseFor(f.pose, plan, symmetry, partner, f.farPose);
+    pts.push(...posePoints(f.pose, plan, far));
+    // The implement reaches past the hand, and framing that clips the
+    // plates off a barbell is worse than framing a little wider.
+    const reach = propReach(prop);
+    for (const g of gripsOf(f.pose, far, plan)) {
+      pts.push([g.at[0] - reach, g.at[1]], [g.at[0] + reach, g.at[1]]);
+    }
+  });
+
+  /* Include the floor only when the figure is standing on it. A
+     hanging figure framed down to the floor is a person floating in
+     the top third of an empty box. */
+  const lowest = pts.reduce((m, p) => Math.max(m, p[1]), 0);
+  const grounded = scene !== 'pull_bar' && scene !== 'none' && lowest > GROUND_Y - 12;
+  const box = fitBoxOf(pts, 6, grounded ? GROUND_Y + 2 : undefined);
+
+  const joint = travelJoint(drawing);
+  const effort = effortIndex(drawing);
+  const path = joint ? trajectory(drawing, joint) : [];
+  const effortAt = joint ? resolvePose(drawing.frames[effort].pose)[joint] : null;
+  const range = effortAt
+    ? path.reduce((m, p) => Math.max(m, Math.hypot(p[0] - effortAt[0], p[1] - effortAt[1])), 0)
+    : 0;
+
+  return {
+    view: drawing.view ?? 'side',
+    viewBox: viewBoxOf(box),
+    unit: box.size / 100,
+    joint, path, range, effortAt, effort,
+    holding: prop !== 'none' || GRIP_SCENES.has(scene),
+  };
+}
+
+/* ============================================================
+   ONE INSTANT
+   ============================================================ */
+
+const Instant = memo(function Instant({
+  drawing, pose, comp, prop, scene, primary, secondary, showPath, at,
 }: {
   drawing: MovementDrawing;
-  frame: PatternFrame;
+  pose: Pose;
+  comp: Composition;
   prop: PropGlyph;
   scene: SceneGlyph;
-  ghost: PatternFrame | null;
-  arrow: boolean;
+  primary: ReadonlySet<string>;
+  secondary: ReadonlySet<string>;
+  showPath: boolean;
+  /** Where the loop is, 0–1, for the chevron on the path. */
+  at: number;
 }) {
-  const points = resolvePose(frame.pose);
-  const motion = arrow && ghost ? motionBetween(ghost.pose, frame.pose) : null;
-  // In a gait loop the far side takes the OTHER frame's pose, which
-  // is what turns two frames of running into running rather than
-  // two frames of hopping.
-  const partner = drawing.frames.find((f) => f !== frame)?.pose;
+  const plan = planFor(comp.view);
+  const symmetry = drawing.symmetry ?? 'mirror';
+  const partner = drawing.frames.length > 1 ? drawing.frames[1].pose : undefined;
+  const far = farPoseFor(pose, plan, symmetry, partner);
+  const grips: Grip[] = gripsOf(pose, far, plan);
+
+  const activation = useMemo(() => {
+    if (!comp.joint || !comp.effortAt) return 0.55;
+    const here = resolvePose(pose)[comp.joint];
+    return activationFrom(
+      Math.hypot(here[0] - comp.effortAt[0], here[1] - comp.effortAt[1]),
+      comp.range,
+    );
+  }, [pose, comp]);
+
   return (
     <g transform={drawing.flip ? 'translate(100,0) scale(-1,1)' : undefined}>
-      <Scene scene={scene} />
-      <Figure
-        pose={frame.pose}
-        symmetry={drawing.symmetry}
-        partner={partner}
-        farOverride={frame.farPose}
-        ghost={ghost ? ghost.pose : null}
-      />
-      <Prop glyph={prop} at={points.hand} anchor={anchorFor(scene)} />
-      <MotionArrow cue={motion} points={points} />
+      <Scene scene={scene} plan={plan} />
+      <Figure pose={pose} plan={plan} far={far}
+        primary={primary} secondary={secondary}
+        activation={activation} holding={comp.holding}
+        kit={<Prop glyph={prop} grips={grips} anchor={anchorFor(scene, plan)} />} />
+      {showPath && <MotionPath points={comp.path} at={at} />}
     </g>
+  );
+});
+
+/* ============================================================
+   THE STAGE
+
+   A soft vertical wash and a floor. Enough to put the figure in a
+   place rather than on a blank page (§18), and nothing like a gym:
+   the exercise is the subject and a dumbbell rack behind it is
+   somebody else's exercise.
+   ============================================================ */
+const Stage = memo(function Stage({ id }: { id: string }) {
+  return (
+    <defs>
+      <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" className="fig2__stage-top" />
+        <stop offset="1" className="fig2__stage-base" />
+      </linearGradient>
+    </defs>
   );
 });
 
 /**
  * A single still frame with no timer at all.
  *
- * Used wherever a list needs to show WHICH exercise a row is —
- * the library grid, the plan day, the exercise picker. A list of
- * thirty rows must not start thirty animations (§27), and a still
- * of the effort frame already answers "which movement is this?".
+ * Used wherever a list needs to show WHICH exercise a row is — the
+ * library grid, the plan day, the exercise picker. Thirty rows must
+ * not start thirty animations (§25), and a still of the working
+ * position already answers "which movement is this?".
  */
 export const PoseThumb = memo(function PoseThumb({
-  drawing, prop, scene, label, model,
+  drawing, prop, scene, label,
 }: {
   drawing: MovementDrawing;
   prop: PropGlyph;
   scene: SceneGlyph;
   label?: string;
-  /** Where a 3D demonstration exists, the still comes from that instead. */
-  model?: Model3DDrawing | null;
 }) {
-  if (model) return <Model3DThumb model={model} label={label} />;
-  const frame = drawing.frames[effortIndex(drawing)] ?? drawing.frames[0];
+  const comp = useMemo(() => compose(drawing, prop, scene), [drawing, prop, scene]);
+  const frame = drawing.frames[comp.effort] ?? drawing.frames[0];
+  const empty = useMemo<ReadonlySet<string>>(() => new Set(), []);
   return (
-    <svg viewBox={FIGURE_VIEWBOX} className="posethumb" role="img"
+    <svg viewBox={comp.viewBox} className="posethumb" role="img"
+      style={{ '--fig-u': comp.unit } as CSSProperties}
       aria-label={label ?? `${drawing.name} demonstration`}>
-      <Frame drawing={drawing} frame={frame} prop={prop} scene={scene} ghost={null} arrow={false} />
+      <Instant drawing={drawing} pose={frame.pose} comp={comp} prop={prop} scene={scene}
+        primary={empty} secondary={empty} showPath={false} at={0} />
     </svg>
   );
 });
 
-/** One still 3D frame. No timer, no muscle tint — a list is not a lesson. */
-const Model3DThumb = memo(function Model3DThumb({
-  model, label,
-}: { model: Model3DDrawing; label?: string }) {
-  const camera = useMemo(() => cameraFor(model.frames.map((f) => f.pose), model.rig), [model]);
-  const frame = model.frames[effortFrameOf(model)] ?? model.frames[0];
+/**
+ * The correct working position beside the classic error (§22).
+ *
+ * Only ever in the teaching sheet, and only where a drawing carries
+ * one. It is not in the animation: a demonstration that cycles
+ * through a rounded back is a demonstration teaching a rounded back.
+ */
+export const MistakeCompare = memo(function MistakeCompare({
+  drawing, prop, scene,
+}: {
+  drawing: MovementDrawing;
+  prop: PropGlyph;
+  scene: SceneGlyph;
+}) {
+  const comp = useMemo(() => compose(drawing, prop, scene), [drawing, prop, scene]);
+  const empty = useMemo<ReadonlySet<string>>(() => new Set(), []);
+  const mistake = drawing.mistake;
+  if (!mistake) return null;
+  const right = drawing.frames[mistake.at ?? comp.effort] ?? drawing.frames[0];
   return (
-    <svg viewBox={FIGURE_VIEWBOX} className="posethumb" role="img"
-      aria-label={label ?? `${model.name} demonstration`}>
-      <Figure3D pose={frame.pose} rig={model.rig} camera={camera} />
-    </svg>
+    <div className="mistakes2">
+      {([['Correct', right.pose, 'ok'], [mistake.label, mistake.pose, 'bad']] as const)
+        .map(([label, pose, tone]) => (
+          <figure key={tone} className={`mistakes2__cell mistakes2__cell--${tone}`}>
+            <svg viewBox={comp.viewBox} className="mistakes2__svg" role="img"
+              style={{ '--fig-u': comp.unit } as CSSProperties}
+              aria-label={`${drawing.name}, ${label}`}>
+              <Instant drawing={drawing} pose={pose} comp={comp} prop={prop} scene={scene}
+                primary={empty} secondary={empty} showPath={false} at={0} />
+            </svg>
+            <figcaption>{label}</figcaption>
+          </figure>
+        ))}
+      <p className="mistakes2__why">{mistake.why}</p>
+    </div>
   );
 });
 
 export function HowTo({
   drawing, prop, scene, size = 'player', paused = false, showPhases = true,
-  model = null, primary, secondary,
+  primary, secondary,
 }: {
   drawing: MovementDrawing;
   prop: PropGlyph;
   scene: SceneGlyph;
   size?: HowToSize;
-  /** Stop the timer without unmounting — used while a set is being typed. */
+  /** Stop the clock without unmounting — used while a set is typed. */
   paused?: boolean;
   showPhases?: boolean;
-  /**
-   * The premium 3D demonstration, where the exercise has one. The
-   * timing, the phase caption, the reduced-motion strip and the
-   * screen-reader description are all SHARED with the flat figure
-   * rather than reimplemented — the model changes what is inside
-   * the stage, and nothing else about how a demonstration behaves.
-   */
-  model?: Model3DDrawing | null;
-  /** Body regions to light up on the 3D model. */
-  primary?: ReadonlySet<Region>;
-  secondary?: ReadonlySet<Region>;
+  /** Taxonomy muscle keys to light up on the body (§8). */
+  primary?: ReadonlySet<string>;
+  secondary?: ReadonlySet<string>;
 }) {
   const reduced = usePrefersReducedMotion();
-  const [frame, setFrame] = useState(0);
-  const timer = useRef<number | undefined>(undefined);
+  const comp = useMemo(() => compose(drawing, prop, scene), [drawing, prop, scene]);
+  const timeline = useMemo(() => buildTimeline(drawing), [drawing]);
+  const [ms, setMs] = useState(0);
+  const empty = useMemo<ReadonlySet<string>>(() => new Set(), []);
+  const pri = primary ?? empty;
+  const sec = secondary ?? empty;
 
-  const camera = useMemo(
-    () => (model ? cameraFor(model.frames.map((f) => f.pose), model.rig) : null),
-    [model],
-  );
-  // One list of phases whichever renderer is in the stage.
-  const frames: Array<{ label: string; cue?: string; holdMs?: number }> =
-    model ? model.frames : drawing.frames;
+  /*
+   * One rAF loop, stepped by real elapsed time so a slow device plays
+   * the movement at the right speed rather than in slow motion, and
+   * capped so it does not re-render sixty times a second to move a
+   * figure a third of a pixel.
+   */
+  const raf = useRef(0);
+  const last = useRef(0);
+  useEffect(() => {
+    if (reduced || paused || drawing.frames.length < 2) return;
+    let live = true;
+    last.current = 0;
+    const step = (now: number) => {
+      if (!live) return;
+      if (last.current === 0) last.current = now;
+      const dt = now - last.current;
+      if (dt >= FRAME_MS) {
+        last.current = now;
+        setMs((t) => (t + dt) % timeline.total);
+      }
+      raf.current = window.requestAnimationFrame(step);
+    };
+    raf.current = window.requestAnimationFrame(step);
+    return () => { live = false; window.cancelAnimationFrame(raf.current); };
+  }, [reduced, paused, drawing, timeline]);
+
+  const sample = sampleTimeline(drawing, timeline, ms);
+  const frames = drawing.frames;
+  const current = frames[sample.index] ?? frames[0];
 
   /**
    * "One rep" is everything after the setup frame. Derived rather
-   * than authored: a drawing that gains a frame should not also
-   * need somebody to remember to update a sentence about it.
+   * than authored: a drawing that gains a frame should not also need
+   * somebody to remember a sentence about it.
    */
   const repPhases = useMemo(() => {
     if (frames.length < 3) return null;
     return frames.slice(1).map((f) => f.label).join(' → ');
   }, [frames]);
 
-  useEffect(() => {
-    if (reduced || paused || frames.length < 2) return;
-    const hold = frames[frame]?.holdMs ?? 700;
-    timer.current = window.setTimeout(
-      () => setFrame((i) => (i + 1) % frames.length),
-      hold,
-    );
-    return () => window.clearTimeout(timer.current);
-  }, [frame, frames, reduced, paused]);
-
   /**
-   * Every phase and its cue, always in the DOM. This is the
-   * demonstration's equivalent of a chart's data table: the
-   * movement has to be readable by somebody who cannot see the
-   * figure move, and by somebody whose browser never animates it.
+   * Every phase and its cue, always in the DOM. The demonstration's
+   * equivalent of a chart's data table: the movement has to be
+   * readable by somebody who cannot see the figure move.
    */
   const description = (
     <ol className="sr-only">
-      {frames.map((f, i) => (
+      {frames.map((f: PatternFrame, i) => (
         <li key={f.label + i}>{f.label}. {f.cue ?? ''}</li>
       ))}
     </ol>
   );
 
-  // Reduced motion: the movement as a strip, which is a legitimate
-  // way to read a movement rather than a degraded one.
-  //
-  // In the player the strip has the SAME footprint as the animated
-  // stage — one 180px square — so three frames came out 46px wide
-  // each and taught nothing. It shows two instead: the start, and the
-  // position the effort is in. Start and end are the pair that
-  // actually define a repetition; the frames between them are the
-  // animation's business. The sheet still gets every frame.
+  const stageId = `stage-${drawing.key}-${size}`;
+
+  /*
+   * Reduced motion (§27): the movement as a strip. A legitimate way
+   * to read a movement rather than a degraded one — the anatomy, the
+   * highlighting and the movement path are all still there, and the
+   * path is doing MORE work here than it does in the animation
+   * because it is the only thing carrying direction.
+   *
+   * In the player the strip has the same footprint as the animated
+   * stage, so three frames come out too small to teach anything. It
+   * shows two: the start, and the working position. The sheet gets
+   * every frame.
+   */
   if (reduced) {
-    const effort = model ? effortFrameOf(model) : effortIndex(drawing);
     const indices = size === 'hero' || frames.length < 3
       ? frames.map((_, i) => i)
-      : [...new Set([0, effort])];
-    const strip = indices.map((i) => frames[i]);
+      : [...new Set([0, comp.effort])];
     return (
       <figure className={`howto howto--${size} howto--strip`}>
         <div className="howto__row">
-          {strip.map((f, i) => (
-            <div key={f.label + i} className="howto__cell">
-              <svg viewBox={FIGURE_VIEWBOX} className="howto__svg" role="img"
-                aria-label={`${model?.name ?? drawing.name}, ${f.label}`}>
-                {model && camera ? (
-                  <>
-                    <Figure3D pose={model.frames[indices[i]].pose} rig={model.rig} camera={camera}
-                      primary={primary} secondary={secondary} />
-                    {i > 0 && (
-                      <Arrow3D from={model.frames[indices[i - 1]].pose}
-                        to={model.frames[indices[i]].pose} camera={camera} />
-                    )}
-                  </>
-                ) : (
-                  <Frame drawing={drawing} frame={drawing.frames[indices[i]]} prop={prop} scene={scene}
-                    ghost={i > 0 ? drawing.frames[indices[i - 1]] : null} arrow />
-                )}
+          {indices.map((i) => (
+            <div key={i} className="howto__cell">
+              <svg viewBox={comp.viewBox} className="howto__svg" role="img"
+                style={{ '--fig-u': comp.unit } as CSSProperties}
+                aria-label={`${drawing.name}, ${frames[i].label}`}>
+                <Stage id={`${stageId}-${i}`} />
+                <rect x="-200" y="-200" width="500" height="500" fill={`url(#${stageId}-${i})`} />
+                <Instant drawing={drawing} pose={frames[i].pose} comp={comp}
+                  prop={prop} scene={scene} primary={pri} secondary={sec}
+                  showPath={i === comp.effort} at={i / Math.max(1, frames.length - 1)} />
               </svg>
-              <span className="howto__steplabel">{f.label}</span>
+              <span className="howto__steplabel">{frames[i].label}</span>
             </div>
           ))}
         </div>
@@ -276,25 +422,6 @@ export function HowTo({
     );
   }
 
-  const current = frames[frame] ?? frames[0];
-  const prevIndex = (frame - 1 + frames.length) % frames.length;
-  const previous = frames.length > 1 ? frames[prevIndex] : null;
-  const hold = current.holdMs ?? 700;
-
-  const stage = model && camera ? (
-    <>
-      <Figure3D pose={model.frames[frame].pose} rig={model.rig} camera={camera}
-        primary={primary} secondary={secondary} />
-      {frames.length > 1 && (
-        <Arrow3D from={model.frames[prevIndex].pose} to={model.frames[frame].pose} camera={camera} />
-      )}
-    </>
-  ) : (
-    <Frame drawing={drawing} frame={drawing.frames[frame] ?? drawing.frames[0]}
-      prop={prop} scene={scene}
-      ghost={previous ? drawing.frames[prevIndex] ?? null : null} arrow />
-  );
-
   // The teaching sheet explains; the player demonstrates. Only the
   // sheet gets the strip, the per-frame cue and the rep summary.
   const explain = size === 'hero';
@@ -302,9 +429,13 @@ export function HowTo({
   return (
     <figure className={`howto howto--${size}`}>
       <div className="howto__stage">
-        <svg viewBox={FIGURE_VIEWBOX} className="howto__svg" role="img"
-          aria-label={`${model?.name ?? drawing.name} demonstration, ${current.label}`}>
-          {stage}
+        <svg viewBox={comp.viewBox} className="howto__svg" role="img"
+          style={{ '--fig-u': comp.unit } as CSSProperties}
+          aria-label={`${drawing.name} demonstration, ${current.label}`}>
+          <Stage id={stageId} />
+          <rect x="-200" y="-200" width="500" height="500" fill={`url(#${stageId})`} />
+          <Instant drawing={drawing} pose={sample.pose} comp={comp} prop={prop} scene={scene}
+            primary={pri} secondary={sec} showPath at={ms / timeline.total} />
         </svg>
 
         {/* The phase, ON the picture. It costs no layout height, it
@@ -315,7 +446,7 @@ export function HowTo({
             <span className="howto__tagname">{current.label}</span>
             <span className="howto__dots">
               {frames.map((f, i) => (
-                <i key={f.label + i} className={i === frame ? 'is-now' : ''} />
+                <i key={f.label + i} className={i === sample.index ? 'is-now' : ''} />
               ))}
             </span>
           </div>
@@ -326,13 +457,15 @@ export function HowTo({
         <div className="howto__phases">
           <ol className="howto__steps" aria-hidden="true">
             {frames.map((f, i) => (
-              <li key={f.label + i} className={i === frame ? 'is-now' : ''}>
+              <li key={f.label + i} className={i === sample.index ? 'is-now' : ''}>
                 <span className="howto__stepname">{f.label}</span>
-                {/* The bar runs for exactly as long as the frame is
-                    held, so the strip is a clock rather than a legend. */}
-                {i === frame && !paused && (
-                  <span key={`${frame}-bar`} className="howto__stepbar"
-                    style={{ animationDuration: `${hold}ms` }} />
+                {/* The bar runs for exactly as long as this phase owns
+                    the timeline, so the strip is a clock rather than a
+                    legend. Keyed on the index so it restarts on each
+                    phase instead of drifting out of step with it. */}
+                {i === sample.index && !paused && (
+                  <span key={`bar-${sample.index}`} className="howto__stepbar"
+                    style={{ animationDuration: `${budgetOf(drawing, i)}ms` }} />
                 )}
               </li>
             ))}

@@ -16,7 +16,10 @@ import { STRENGTH_EXERCISES } from './exercises';
 import { CARDIO_EXERCISES } from './cardio';
 import { WARMUP_EXERCISES } from './warmups';
 import { PLAN_TEMPLATES } from './plans';
-import { DRAWING_INDEX, MODEL_DRAWINGS, undrawableMuscles, ungroupedMuscleGroups } from './media';
+import {
+  DRAWING_INDEX, MOVEMENT_DRAWINGS, PLANS, buildTimeline, undrawableMuscles,
+  ungroupedMuscleGroups, unmodelledMuscles,
+} from './media';
 import { EQUIPMENT, EXERCISE_TYPES, MUSCLES, MUSCLE_GROUPS } from './taxonomy';
 import type { ExerciseContent } from './types';
 
@@ -95,26 +98,35 @@ export function validateContent(): ContentProblem[] {
     problems.push({ where: `anatomy:${group}`, problem: 'muscle group has no chart fallback' });
   }
 
-  /* The 3D demonstrations are keyed by exercise SLUG rather than by a
-     media row, because they are a second visual system layered over
-     the existing library rather than a replacement for its media
-     abstraction. That makes a typo in a slug completely silent: the
-     exercise simply keeps its flat drawing and nobody finds out. */
-  for (const model of MODEL_DRAWINGS) {
-    if (!EXERCISE_BY_SLUG.has(model.slug)) {
-      problems.push({ where: `model3d:${model.slug}`, problem: 'names an exercise we do not ship' });
-    }
+  /* A taxonomy muscle the FIGURE cannot model is a different failure
+     from one the chart cannot draw: the chart says "no region", the
+     figure silently highlights nothing at all, so an exercise that
+     works it looks like an exercise that works nothing. */
+  for (const muscle of unmodelledMuscles()) {
+    problems.push({ where: `musculature:${muscle}`, problem: 'taxonomy muscle has no belly on the figure' });
   }
-  const modelSlugs = new Set(MODEL_DRAWINGS.map((m) => m.slug));
-  if (modelSlugs.size !== MODEL_DRAWINGS.length) {
-    problems.push({ where: 'model3d', problem: 'two drawings claim the same exercise' });
-  }
-  for (const model of MODEL_DRAWINGS) {
-    if (model.frames.length < 2) {
-      problems.push({ where: `model3d:${model.slug}`, problem: 'a demonstration needs at least two frames' });
+
+  /* Drawings. A view that does not exist, a timeline that never
+     advances and a mistake pose with no explanation are all invisible
+     in review and obvious the first time somebody opens the exercise. */
+  for (const d of MOVEMENT_DRAWINGS) {
+    const where = `drawing:${d.key}`;
+    if (d.view && !(d.view in PLANS)) {
+      problems.push({ where, problem: `unknown view "${d.view}"` });
     }
-    for (const f of model.frames) {
-      if (!f.label.trim()) problems.push({ where: `model3d:${model.slug}`, problem: 'frame with no label' });
+    if (d.tempoScale != null && (d.tempoScale <= 0 || d.tempoScale > 4)) {
+      problems.push({ where, problem: 'tempoScale outside a sane range' });
+    }
+    for (const f of d.frames) {
+      if (f.moveShare != null && (f.moveShare < 0.2 || f.moveShare > 1)) {
+        problems.push({ where, problem: `${f.label}: moveShare outside 0.2–1` });
+      }
+    }
+    if (buildTimeline(d).total <= 0) {
+      problems.push({ where, problem: 'timeline has no duration' });
+    }
+    if (d.mistake && !d.mistake.why.trim()) {
+      problems.push({ where, problem: 'mistake pose with no explanation' });
     }
   }
 

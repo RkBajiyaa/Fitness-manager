@@ -334,3 +334,28 @@ export function undrawableMuscles(): string[] {
 export function ungroupedMuscleGroups(): string[] {
   return MUSCLE_GROUPS.map((g) => g.key).filter((key) => !(key in GROUP_MUSCLES));
 }
+
+/**
+ * The two muscle sets an exercise marks, resolved once.
+ *
+ * Shared by the CHART and the FIGURE so the two can never disagree
+ * about what an exercise works — including the group fallback, which
+ * is the case where they would most easily drift: a member-authored
+ * exercise has no muscle list, the chart falls back to the group, and
+ * a figure that did not would highlight nothing beside a chart that
+ * highlighted a thigh.
+ *
+ * A muscle listed twice is primary. It cannot be both, and painting
+ * it at two weights makes the secondary key a lie.
+ */
+export function muscleSets(
+  primaryMuscles: readonly string[],
+  secondaryMuscles: readonly string[],
+  muscleGroup: string,
+): { primary: Set<string>; secondary: Set<string> } {
+  const primary = new Set<string>(
+    primaryMuscles.length ? primaryMuscles : musclesForGroup(muscleGroup),
+  );
+  const secondary = new Set<string>(secondaryMuscles.filter((m) => !primary.has(m)));
+  return { primary, secondary };
+}
