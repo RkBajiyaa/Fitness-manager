@@ -19,6 +19,7 @@ import { PLAN_TEMPLATES } from './plans';
 import {
   DRAWING_INDEX, MOVEMENT_DRAWINGS, PLANS, buildTimeline, undrawableMuscles,
   ungroupedMuscleGroups, unmodelledMuscles,
+  DRAWN_MUSCLES, MIN_FORESHORTEN,
 } from './media';
 import { EQUIPMENT, EXERCISE_TYPES, MUSCLES, MUSCLE_GROUPS } from './taxonomy';
 import type { ExerciseContent } from './types';
@@ -120,6 +121,36 @@ export function validateContent(): ContentProblem[] {
     for (const f of d.frames) {
       if (f.moveShare != null && (f.moveShare < 0.2 || f.moveShare > 1)) {
         problems.push({ where, problem: `${f.label}: moveShare outside 0.2–1` });
+      }
+      /* Foreshortening is the second half of a polar coordinate, not a
+         way to build a different person. Past a bit over half, a
+         segment stops reading as a limb pointing away and starts
+         reading as a limb that is missing. */
+      for (const [seg, v] of Object.entries(f.pose.short ?? {})) {
+        if (typeof v === 'number' && (v < MIN_FORESHORTEN || v > 1)) {
+          problems.push({
+            where,
+            problem: `${f.label}: ${seg} foreshortened to ${v} (allowed ${MIN_FORESHORTEN}–1)`,
+          });
+        }
+      }
+    }
+    /* A silent key carries travel, not vocabulary — so it must never be
+       the frame a thumbnail freezes on or a mistake is compared with. */
+    if (d.frames.every((f) => f.silent)) {
+      problems.push({ where, problem: 'every frame is silent — the drawing has no phases' });
+    }
+    if (d.effortFrame != null && d.frames[d.effortFrame]?.silent) {
+      problems.push({ where, problem: 'effortFrame points at a silent shaping key' });
+    }
+    if (d.mistake?.at != null && d.frames[d.mistake.at]?.silent) {
+      problems.push({ where, problem: 'mistake compares against a silent shaping key' });
+    }
+    /* A stabiliser the figure cannot draw lights nothing, exactly like
+       a primary muscle with no belly on the facing in use. */
+    for (const m of d.stabilisers ?? []) {
+      if (!DRAWN_MUSCLES.has(m)) {
+        problems.push({ where, problem: `stabiliser "${m}" has no belly to light up` });
       }
     }
     if (buildTimeline(d).total <= 0) {

@@ -119,6 +119,7 @@ export function ExerciseTeaching({
         <MuscleMap
           primaryMuscles={exercise.primaryMuscles}
           secondaryMuscles={exercise.secondaryMuscles}
+          stabilisers={howTo?.drawing.stabilisers}
           muscleGroup={exercise.muscleGroup}
           labelFor={labels.muscle}
         />

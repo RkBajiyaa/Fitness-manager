@@ -45,7 +45,7 @@
    ============================================================ */
 import { MUSCLES } from '../taxonomy';
 import {
-  WAIST_AT, closedCurve, openCurve,
+  closedCurve, openCurve,
   type BodyPlan, type FigurePoints,
 } from './figure';
 
@@ -74,6 +74,27 @@ export interface Belly {
   only?: 'near' | 'far';
   /** Paint order within a bone. Higher draws later. */
   z?: number;
+}
+
+/**
+ * A BONY LANDMARK: a kneecap, an elbow point, a sternum (§3, §5).
+ *
+ * Filled like a muscle and shaped like one, but it is not one — it
+ * carries no taxonomy key, so it never lights up and never appears in
+ * the activation overlay. A patella that glowed when an exercise
+ * worked the quadriceps would be teaching a beginner that their
+ * kneecap is a muscle.
+ *
+ * These are what make a joint read as a JOINT rather than as the place
+ * two limbs meet. The width flare in the limb profile gives the joint
+ * its shape; the plate gives it a hard highlight, which is what the
+ * eye actually uses to tell bone under skin from muscle under skin.
+ */
+export interface Plate {
+  bone: BoneRef;
+  facings: readonly Facing[];
+  pts: ReadonlyArray<readonly [number, number]>;
+  pair?: boolean;
 }
 
 /** A contour line — modelling, not a muscle. Open, stroked. */
@@ -113,10 +134,15 @@ export interface Bone {
 
 export function bonesOf(p: FigurePoints, plan: BodyPlan): Record<BoneRef, Bone> {
   const w = plan.widths;
-  const waist: readonly [number, number] = [
-    p.hip[0] + (p.shoulder[0] - p.hip[0]) * WAIST_AT,
-    p.hip[1] + (p.shoulder[1] - p.hip[1]) * WAIST_AT,
-  ];
+  /*
+   * `p.waist` rather than a point interpolated along hip → shoulder,
+   * and that one substitution is what makes the whole anatomy fold.
+   * The trunk has two segments now, so the abdominal wall and the
+   * pelvis hang off the lumbar one and the pectorals and the rib cage
+   * off the thoracic one — every belly and contour on this body
+   * inherited a hip hinge without a single shape being re-authored.
+   */
+  const waist = p.waist as readonly [number, number];
   const neckEnd: readonly [number, number] = [
     p.shoulder[0] + (p.head[0] - p.shoulder[0]) * 0.55,
     p.shoulder[1] + (p.head[1] - p.shoulder[1]) * 0.55,
@@ -340,6 +366,52 @@ export const BELLIES: readonly Belly[] = [
 ];
 
 /* ============================================================
+   BONY LANDMARKS (§3, §5)
+   ============================================================ */
+export const PLATES: readonly Plate[] = [
+  {
+    // The patella. On the shin rather than the thigh so it stays with
+    // the lower leg through flexion, which is where a kneecap actually
+    // travels — on the thigh it would slide up the leg as the knee bent.
+    bone: 'shin', facings: ['front', 'side'],
+    pts: [[-0.03, 0.14], [0.02, 0.46], [0.13, 0.6], [0.21, 0.42], [0.17, 0.1],
+      [0.06, 0.0]],
+  },
+  {
+    // The olecranon — the point of the elbow, on the back of the arm.
+    bone: 'foreArm', facings: ['front', 'side', 'back'],
+    pts: [[-0.05, -0.16], [0.0, -0.52], [0.12, -0.6], [0.18, -0.34], [0.1, -0.08]],
+  },
+  {
+    // The sternum, between the two pectorals. Narrow on purpose: this
+    // is the one place on the trunk where the eye expects bone, and it
+    // is what stops a pair of pectorals reading as one slab.
+    bone: 'trunkUpper', facings: ['front'],
+    pts: [[0.5, -0.1], [0.52, 0.1], [0.98, 0.13], [1.0, -0.13]],
+  },
+  {
+    // The iliac crest, as a plane rather than a line: the top surface
+    // of the pelvis, which is what §3 needs visible for the rib cage →
+    // waist → pelvis → hip → femur chain to read.
+    bone: 'trunkLower', facings: ['front'], pair: true,
+    pts: [[0.3, 0.3], [0.38, 0.72], [0.2, 0.86], [0.14, 0.44]],
+  },
+  {
+    bone: 'trunkLower', facings: ['side'],
+    pts: [[0.3, 0.18], [0.42, 0.62], [0.26, 0.84], [0.16, 0.36]],
+  },
+];
+
+export function platesOn(bone: BoneRef, facing: Facing): Plate[] {
+  return PLATES.filter((pl) => pl.bone === bone && pl.facings.includes(facing));
+}
+
+export function platePath(pl: Plate, bone: Bone, mirror = false): string {
+  const s = mirror ? -1 : 1;
+  return closedCurve(pl.pts.map(([u, n]) => toPage(bone, u, n * s)), 0.5);
+}
+
+/* ============================================================
    CONTOURS
 
    The lines that make a body legible BEFORE anything is coloured
@@ -350,21 +422,74 @@ export const BELLIES: readonly Belly[] = [
    the quadriceps on, now marked.
    ============================================================ */
 export const CONTOURS: readonly Contour[] = [
-  /* trunk, front */
+  /* ---- the rib cage (§2) ----
+     A costal arch and a clavicle line. Between them they turn one
+     smooth trunk into upper chest / sternum / rib cage / abdominal
+     wall, which is the whole of §2 and costs four lines. */
   { bone: 'trunkUpper', facings: F, weight: 'firm', pts: [[0.62, 0.0], [1.0, 0.0]] },
+  {
+    // The costal arch: down and out from the xiphoid. This is the line
+    // that separates the rib cage from the abdominal wall, and without
+    // it a braced trunk and a folded one look the same from the front.
+    bone: 'trunkUpper', facings: F, weight: 'firm', pair: true,
+    pts: [[0.44, 0.04], [0.32, 0.4], [0.12, 0.66]],
+  },
+  {
+    // The clavicle — §2's "upper chest". It is also what gives the
+    // shoulder somewhere to attach to instead of floating beside the neck.
+    bone: 'trunkUpper', facings: F, weight: 'firm', pair: true,
+    pts: [[0.97, 0.08], [0.93, 0.44], [0.85, 0.74]],
+  },
   { bone: 'trunkUpper', facings: F, pts: [[0.58, 0.3], [0.78, 0.56], [0.96, 0.66]], pair: true },
-  { bone: 'trunkLower', facings: F, weight: 'firm', pts: [[0.2, 0.0], [1.0, 0.0]] },
-  { bone: 'trunkLower', facings: F, pts: [[0.5, -0.44], [0.52, 0.0], [0.5, 0.44]] },
-  { bone: 'trunkLower', facings: F, pts: [[0.82, -0.48], [0.84, 0.0], [0.82, 0.48]] },
-  { bone: 'trunkLower', facings: F, pts: [[0.1, 0.5], [0.34, 0.86]], pair: true },
+  /* ---- the abdominal wall ---- */
+  /* The linea alba and two tendinous intersections. SHORT and curved:
+     spanning the full width and crossing a full-length midline drew a
+     crosshair on the belly, which is one more shape to decode rather
+     than the abdominal wall it is supposed to be reading as. */
+  { bone: 'trunkLower', facings: F, pts: [[0.28, 0.0], [0.62, 0.02], [0.98, 0.0]] },
+  { bone: 'trunkLower', facings: F, pts: [[0.52, -0.3], [0.56, 0.0], [0.52, 0.3]] },
+  { bone: 'trunkLower', facings: F, pts: [[0.84, -0.34], [0.88, 0.0], [0.84, 0.34]] },
+  /* ---- the pelvis (§3) ----
+     The inguinal line from the iliac crest down to the pubis is THE
+     pelvis signal: it is the boundary the eye reads as "the leg starts
+     here", and it is what makes a hip joint a joint rather than the
+     point where a thigh happens to be attached. Firm, because it has
+     to survive at thumbnail size. */
+  {
+    bone: 'trunkLower', facings: F, weight: 'firm', pair: true,
+    pts: [[0.34, 0.8], [0.16, 0.46], [-0.06, 0.1]],
+  },
+  {
+    // And the hip crease itself — the short arc around the femoral head.
+    bone: 'trunkLower', facings: F, pair: true,
+    pts: [[0.16, 0.92], [0.0, 0.78], [-0.14, 0.5]],
+  },
   /* trunk, side */
   { bone: 'trunkUpper', facings: S, pts: [[0.5, 0.36], [0.74, 0.66], [1.0, 0.76]] },
+  {
+    bone: 'trunkUpper', facings: S, weight: 'firm',
+    pts: [[0.46, 0.42], [0.32, 0.72], [0.18, 0.84]],
+  },
   { bone: 'trunkLower', facings: S, pts: [[0.32, 0.6], [0.36, 0.94]] },
   { bone: 'trunkLower', facings: S, pts: [[0.64, 0.64], [0.68, 0.96]] },
+  {
+    bone: 'trunkLower', facings: S, weight: 'firm',
+    pts: [[0.32, 0.86], [0.1, 0.56], [-0.08, 0.2]],
+  },
   /* trunk, back */
   { bone: 'trunkUpper', facings: B, weight: 'firm', pts: [[0.1, 0.0], [1.0, 0.0]] },
   { bone: 'trunkLower', facings: B, weight: 'firm', pts: [[0.1, 0.0], [1.0, 0.0]] },
   { bone: 'trunkUpper', facings: B, pts: [[0.98, 0.22], [0.7, 0.34], [0.3, 0.5]], pair: true },
+  {
+    // The scapula's medial border — the rib cage, read from behind.
+    bone: 'trunkUpper', facings: B, pair: true,
+    pts: [[0.92, 0.22], [0.78, 0.5], [0.6, 0.6]],
+  },
+  {
+    // The sacral triangle: the pelvis from behind.
+    bone: 'trunkLower', facings: B, pair: true,
+    pts: [[0.36, 0.72], [0.22, 0.34], [0.06, 0.1]],
+  },
   /* shoulder seam — the line that separates a deltoid from an arm */
   { bone: 'upperArm', facings: ALL, weight: 'firm', pts: [[0.3, -0.8], [0.22, 0.0], [0.3, 0.8]] },
   /* elbow and knee, the two joints §3 names */

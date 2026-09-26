@@ -137,11 +137,13 @@ function View({
 }
 
 export function MuscleMap({
-  primaryMuscles, secondaryMuscles, muscleGroup, labelFor,
+  primaryMuscles, secondaryMuscles, stabilisers, muscleGroup, labelFor,
   size = 'md', variant = 'full', views = 'both',
 }: {
   primaryMuscles: readonly string[];
   secondaryMuscles: readonly string[];
+  /** Muscles that hold the position, from the DRAWING (§9). Optional. */
+  stabilisers?: readonly string[];
   /** Fallback for rows with no muscle list — see `musclesForGroup`. */
   muscleGroup: string;
   /** `api.exercises.label.muscle`. Keys are stored, labels are rendered (rule 22). */
@@ -171,6 +173,10 @@ export function MuscleMap({
     [secondaryMuscles, primary],
   );
 
+  const holds = useMemo(
+    () => (stabilisers ?? []).filter((m) => !primary.includes(m) && !secondary.includes(m)),
+    [stabilisers, primary, secondary],
+  );
   const key = useMemo(() => keyViewFor(primary, secondary), [primary, secondary]);
   const shown: AnatomyView[] = views === 'key' ? [key] : ['front', 'back'];
   const nothingKnown = primary.length === 0 && secondary.length === 0;
@@ -223,6 +229,16 @@ export function MuscleMap({
             <div className="mmap__keyrow">
               <dt><span className="mmap__swatch mmap__swatch--secondary" />Also</dt>
               <dd>{secondary.map(labelFor).join(', ')}</dd>
+            </div>
+          )}
+          {/* The third tier is NAMED, not just shaded (§9). The figure
+              marks it at a tenth of the primary weight, and an unnamed
+              faint red shape is a question rather than an answer —
+              colour never travels alone in this product. */}
+          {holds.length > 0 && (
+            <div className="mmap__keyrow">
+              <dt><span className="mmap__swatch mmap__swatch--stabiliser" />Holds you steady</dt>
+              <dd>{holds.map(labelFor).join(', ')}</dd>
             </div>
           )}
         </dl>

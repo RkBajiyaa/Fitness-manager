@@ -43,8 +43,8 @@
    ============================================================ */
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
-  buildTimeline, effortIndex, fitBoxOf, planFor, posePoints, resolvePose,
-  sampleTimeline, trajectory, travelJoint, viewBoxOf,
+  buildTimeline, effortIndex, fitBoxOf, namedFrames, phaseIndexOf, planFor, planesOf,
+  posePoints, resolvePose, sampleTimeline, trajectory, travelJoint, viewBoxOf,
   type FigureView, type JointName, type MovementDrawing, type PatternFrame,
   type Pose, type PropGlyph, type SceneGlyph,
 } from '../../data/media/figure';
@@ -58,9 +58,18 @@ export type HowToSize = 'hero' | 'player' | 'compact';
 /** ~30fps. Smooth for a vector figure, and a third of the work of 90. */
 const FRAME_MS = 33;
 
-/** How long one phase owns the loop, tempo included. */
+/**
+ * How long one PHASE owns the loop, tempo included — its own budget
+ * plus every shaping key inside it, so the progress bar under the
+ * strip is a clock rather than a legend that stops early.
+ */
 function budgetOf(drawing: MovementDrawing, i: number): number {
-  return (drawing.frames[i]?.holdMs ?? 700) * (drawing.tempoScale ?? 1);
+  const scale = drawing.tempoScale ?? 1;
+  let total = (drawing.frames[i]?.holdMs ?? 700) * scale;
+  for (let k = i + 1; k < drawing.frames.length && drawing.frames[k].silent; k++) {
+    total += (drawing.frames[k].holdMs ?? 700) * scale;
+  }
+  return total;
 }
 
 /** True when the viewer has asked the OS for less motion. */
@@ -107,6 +116,8 @@ interface Composition {
   effortAt: [number, number] | null;
   effort: number;
   holding: boolean;
+  /** Muscles that only hold the position (§9), minus anything already worked. */
+  stabilisers: ReadonlySet<string>;
 }
 
 /**
@@ -119,6 +130,8 @@ interface Composition {
  */
 const GRIP_SCENES: ReadonlySet<SceneGlyph> = new Set(['pull_bar', 'dip_bars']);
 
+const EMPTY_SET: ReadonlySet<string> = new Set();
+
 /** Roughly how far an implement reaches past the hands, for framing. */
 function propReach(glyph: PropGlyph): number {
   switch (glyph) {
@@ -130,14 +143,18 @@ function propReach(glyph: PropGlyph): number {
   }
 }
 
-function compose(drawing: MovementDrawing, prop: PropGlyph, scene: SceneGlyph): Composition {
+function compose(
+  drawing: MovementDrawing, prop: PropGlyph, scene: SceneGlyph,
+  primary: ReadonlySet<string> = EMPTY_SET, secondary: ReadonlySet<string> = EMPTY_SET,
+): Composition {
   const plan = planFor(drawing.view);
   const symmetry = drawing.symmetry ?? 'mirror';
+  const planes = planesOf(drawing);
   const pts: Array<[number, number]> = [];
 
   drawing.frames.forEach((f, i) => {
     const partner = drawing.frames[(i + 1) % drawing.frames.length]?.pose;
-    const far = farPoseFor(f.pose, plan, symmetry, partner, f.farPose);
+    const far = farPoseFor(f.pose, plan, symmetry, partner, f.farPose, planes);
     pts.push(...posePoints(f.pose, plan, far));
     // The implement reaches past the hand, and framing that clips the
     // plates off a barbell is worse than framing a little wider.
@@ -162,11 +179,18 @@ function compose(drawing: MovementDrawing, prop: PropGlyph, scene: SceneGlyph): 
     ? path.reduce((m, p) => Math.max(m, Math.hypot(p[0] - effortAt[0], p[1] - effortAt[1])), 0)
     : 0;
 
+  /* A muscle the exercise already names as worked is never demoted to
+     a stabiliser: the drawing describes the movement, the exercise row
+     describes what it trains, and the exercise wins. */
+  const stabilisers = new Set(
+    (drawing.stabilisers ?? []).filter((m) => !primary.has(m) && !secondary.has(m)),
+  );
+
   return {
     view: drawing.view ?? 'side',
     viewBox: viewBoxOf(box),
     unit: box.size / 100,
-    joint, path, range, effortAt, effort,
+    joint, path, range, effortAt, effort, stabilisers,
     holding: prop !== 'none' || GRIP_SCENES.has(scene),
   };
 }
@@ -192,7 +216,7 @@ const Instant = memo(function Instant({
   const plan = planFor(comp.view);
   const symmetry = drawing.symmetry ?? 'mirror';
   const partner = drawing.frames.length > 1 ? drawing.frames[1].pose : undefined;
-  const far = farPoseFor(pose, plan, symmetry, partner);
+  const far = farPoseFor(pose, plan, symmetry, partner, undefined, planesOf(drawing));
   const grips: Grip[] = gripsOf(pose, far, plan);
 
   const activation = useMemo(() => {
@@ -208,8 +232,9 @@ const Instant = memo(function Instant({
     <g transform={drawing.flip ? 'translate(100,0) scale(-1,1)' : undefined}>
       <Scene scene={scene} plan={plan} />
       <Figure pose={pose} plan={plan} far={far}
-        primary={primary} secondary={secondary}
+        primary={primary} secondary={secondary} stabilisers={comp.stabilisers}
         activation={activation} holding={comp.holding}
+        gripBehind={drawing.gripBehind}
         kit={<Prop glyph={prop} grips={grips} anchor={anchorFor(scene, plan)} />} />
       {showPath && <MotionPath points={comp.path} at={at} />}
     </g>
@@ -318,7 +343,10 @@ export function HowTo({
   secondary?: ReadonlySet<string>;
 }) {
   const reduced = usePrefersReducedMotion();
-  const comp = useMemo(() => compose(drawing, prop, scene), [drawing, prop, scene]);
+  const comp = useMemo(
+    () => compose(drawing, prop, scene, primary, secondary),
+    [drawing, prop, scene, primary, secondary],
+  );
   const timeline = useMemo(() => buildTimeline(drawing), [drawing]);
   const [ms, setMs] = useState(0);
   const empty = useMemo<ReadonlySet<string>>(() => new Set(), []);
@@ -353,7 +381,11 @@ export function HowTo({
 
   const sample = sampleTimeline(drawing, timeline, ms);
   const frames = drawing.frames;
-  const current = frames[sample.index] ?? frames[0];
+  // The caption names the PHASE the body is in, which a shaping key is
+  // part of rather than a phase of its own (§15).
+  const phase = phaseIndexOf(frames, sample.index);
+  const named = useMemo(() => namedFrames(frames), [frames]);
+  const current = frames[phase] ?? frames[0];
 
   /**
    * "One rep" is everything after the setup frame. Derived rather
@@ -361,9 +393,9 @@ export function HowTo({
    * somebody to remember a sentence about it.
    */
   const repPhases = useMemo(() => {
-    if (frames.length < 3) return null;
-    return frames.slice(1).map((f) => f.label).join(' → ');
-  }, [frames]);
+    const labels = named.slice(1).map((i) => frames[i].label);
+    return labels.length < 2 ? null : labels.join(' → ');
+  }, [frames, named]);
 
   /**
    * Every phase and its cue, always in the DOM. The demonstration's
@@ -372,9 +404,10 @@ export function HowTo({
    */
   const description = (
     <ol className="sr-only">
-      {frames.map((f: PatternFrame, i) => (
-        <li key={f.label + i}>{f.label}. {f.cue ?? ''}</li>
-      ))}
+      {named.map((i) => {
+        const f: PatternFrame = frames[i];
+        return <li key={f.label + i}>{f.label}. {f.cue ?? ''}</li>;
+      })}
     </ol>
   );
 
@@ -393,8 +426,8 @@ export function HowTo({
    * every frame.
    */
   if (reduced) {
-    const indices = size === 'hero' || frames.length < 3
-      ? frames.map((_, i) => i)
+    const indices = size === 'hero' || named.length < 3
+      ? named
       : [...new Set([0, comp.effort])];
     return (
       <figure className={`howto howto--${size} howto--strip`}>
@@ -441,12 +474,12 @@ export function HowTo({
         {/* The phase, ON the picture. It costs no layout height, it
             sits next to the thing it is naming, and the dots answer
             "how many parts are there" without a control surface. */}
-        {showPhases && !explain && frames.length > 1 && (
+        {showPhases && !explain && named.length > 1 && (
           <div className="howto__tag" aria-hidden="true">
             <span className="howto__tagname">{current.label}</span>
             <span className="howto__dots">
-              {frames.map((f, i) => (
-                <i key={f.label + i} className={i === sample.index ? 'is-now' : ''} />
+              {named.map((i) => (
+                <i key={frames[i].label + i} className={i === phase ? 'is-now' : ''} />
               ))}
             </span>
           </div>
@@ -456,15 +489,15 @@ export function HowTo({
       {showPhases && explain && (
         <div className="howto__phases">
           <ol className="howto__steps" aria-hidden="true">
-            {frames.map((f, i) => (
-              <li key={f.label + i} className={i === sample.index ? 'is-now' : ''}>
-                <span className="howto__stepname">{f.label}</span>
+            {named.map((i) => (
+              <li key={frames[i].label + i} className={i === phase ? 'is-now' : ''}>
+                <span className="howto__stepname">{frames[i].label}</span>
                 {/* The bar runs for exactly as long as this phase owns
                     the timeline, so the strip is a clock rather than a
                     legend. Keyed on the index so it restarts on each
                     phase instead of drifting out of step with it. */}
-                {i === sample.index && !paused && (
-                  <span key={`bar-${sample.index}`} className="howto__stepbar"
+                {i === phase && !paused && (
+                  <span key={`bar-${phase}`} className="howto__stepbar"
                     style={{ animationDuration: `${budgetOf(drawing, i)}ms` }} />
                 )}
               </li>

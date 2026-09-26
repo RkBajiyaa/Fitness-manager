@@ -49,12 +49,13 @@
    ============================================================ */
 import { memo, useId, type ReactNode } from 'react';
 import {
-  HEAD_RADIUS, SEGMENTS, closedCurve, farSideOf, footPath, limbPath,
+  FOREARM_PROFILE, HEAD_RADIUS, SHIN_PROFILE, THIGH_PROFILE,
+  SAGITTAL, UPPERARM_PROFILE, closedCurve, farSideOf, footPath, limbLoft, limbPath,
   offsetSide, openCurve, resolvePose, shadeAxis, trunkOutline,
-  type BodyPlan, type FigurePoints, type Pose, type Symmetry,
+  type BodyPlan, type FigurePoints, type LimbPlanes, type Pose, type Symmetry,
 } from '../../data/media/figure';
 import {
-  belliesOn, bellyPath, bonesOf, contourPath, contoursOn,
+  belliesOn, bellyPath, bonesOf, contourPath, contoursOn, platePath, platesOn,
   type Bone, type BoneRef, type Facing,
 } from '../../data/media/musculature';
 import { GROUND_Y, type Grip } from './Kit';
@@ -109,7 +110,17 @@ function handShapes(
   const ax = -uy;
   const ay = ux;
   const w = plan.widths.hand;
-  const len = SEGMENTS.foot * 0.62;
+  /*
+   * The hand is sized from the DRAWN forearm, not from a constant.
+   * A forearm that is foreshortened (§5) keeps its width but loses its
+   * length, and a fixed hand on the end of it becomes half as long as
+   * the arm it is attached to — which is what made a back squat's grip
+   * read as a mitten. Scaled this way a full-length forearm gets
+   * exactly the hand it always had, and a foreshortened one gets a
+   * hand foreshortened with it.
+   */
+  const fore = Math.hypot(p.hand[0] - p.elbow[0], p.hand[1] - p.elbow[1]);
+  const len = Math.max(2.4, fore * 0.335);
   const base: Pt = p.hand;
   const tip: Pt = [base[0] + ux * len * 0.72, base[1] + uy * len * 0.72];
 
@@ -171,10 +182,24 @@ function handShapes(
  */
 function footShape(p: FigurePoints, plan: BodyPlan, side: 'near' | 'far'): string {
   if (plan.facing === 'side') return footPath(p, plan);
-  const w = plan.widths.foot;
+  /*
+   * Turned towards us, the toes point AT the camera, and the `foot`
+   * angle cannot say that — it is measured in the picture plane, where
+   * 0 means "toes to the right". So a front or rear view ignores the
+   * toe joint and builds the foot from the ankle instead: short,
+   * angled outward, and widening into a toe box.
+   *
+   * Lofted rather than capsuled, because a capsule 3.4 long and 5 wide
+   * is a pebble. The taper from a narrow ankle to a broad forefoot is
+   * the whole of what makes a foot read as a foot from the front.
+   */
+  const w = plan.widths;
   const out = side === 'near' ? 1 : -1;
   const a = p.ankle;
-  return limbPath(a, [a[0] + out * w * 0.34, a[1] + 3.4], w * 0.94, w * 1.28);
+  const toe: [number, number] = [a[0] + out * 1.9, a[1] + 5.0];
+  return limbLoft(a, toe, w, [
+    [0, 'ankle', 0.92], [0.42, 'foot', 1.12], [1, 'foot', 1.42],
+  ]);
 }
 
 /**
@@ -227,8 +252,11 @@ function headShapes(p: FigurePoints, facing: Facing) {
         line([[0.44, 0.44], [0.7, 0.38]]),
         line([[0.5, 0.26], [0.64, 0.24]]),
       ],
-      ear: at(-0.16, -0.06) as [number, number],
-      earR: R * 0.24,
+      // Back of the cheek, not the middle of the face. At R * 0.24 in
+      // the centre it drew a ring exactly where an eye goes, so the
+      // profile head came out looking straight at the viewer.
+      ear: at(-0.3, -0.04) as [number, number],
+      earR: R * 0.17,
       jaw: line([[0.68, -0.6], [0.22, -0.82], [-0.3, -0.7]]),
     };
   }
@@ -258,13 +286,16 @@ function headShapes(p: FigurePoints, facing: Facing) {
       [-0.24, 0.66], [-0.5, 0.56], [-0.56, 0.78],
     ]),
     face: [
-      line([[0.16, 0.24], [0.42, 0.22]]),
-      line([[-0.16, 0.24], [-0.42, 0.22]]),
-      line([[-0.16, -0.36], [0.16, -0.36]]),
+      line([[0.16, 0.26], [0.44, 0.24]]),
+      line([[-0.16, 0.26], [-0.44, 0.24]]),
+      // A nose as one short vertical with a base, and nothing else
+      // (§7). A brow as well is a scribble at eleven units of head.
+      line([[0.02, 0.1], [0.06, -0.16], [-0.06, -0.18]]),
+      line([[-0.17, -0.42], [0.17, -0.42]]),
     ],
     ear: null,
     earR: 0,
-    jaw: line([[0.42, -0.5], [0.0, -0.8], [-0.42, -0.5]]),
+    jaw: line([[0.44, -0.46], [0.0, -0.82], [-0.44, -0.46]]),
   };
 }
 
@@ -289,26 +320,47 @@ function vol(key: string, d: string, a: Pt, b: Pt, half: number): Volume {
   return { key, d, axis: shadeAxis(a, b, half) };
 }
 
-function armPart(
+/**
+ * Past this much fold, the forearm gets its own contour.
+ *
+ * The one-contour-per-chain rule is right for a limb that EXTENDS:
+ * stroking each segment draws a line across the elbow and the figure
+ * becomes a person made of sausages. It is wrong for a limb that
+ * folds back on itself, where the union of the two segments has no
+ * internal edge at all and comes out as a paddle — which is what a
+ * back squat's arm did. An illustrator draws the near edge of the
+ * forearm over the upper arm; so does this.
+ */
+const FOLD_DOT = -0.17;   // ≈ 100° of elbow flexion
+
+function armParts(
   p: FigurePoints, plan: BodyPlan, far: boolean, holding: boolean,
-): { part: Part; hand: { palm: string; fingers: string[]; knuckle: string } } {
+): { parts: Part[]; hand: { palm: string; fingers: string[]; knuckle: string } } {
   const w = plan.widths;
   const hand = handShapes(p, plan, holding);
   const key = far ? 'fa' : 'na';
+  const depth = far ? depthOf(plan) : '';
+  const [ux, uy] = unit(p.shoulder, p.elbow);
+  const [fx, fy] = unit(p.elbow, p.hand);
+  const folded = ux * fx + uy * fy < FOLD_DOT;
+
+  const upper = vol(`${key}-u`, limbLoft(p.shoulder, p.elbow, w, UPPERARM_PROFILE),
+    p.shoulder, p.elbow, w.shoulder / 2);
+  const fore = vol(`${key}-f`, limbLoft(p.elbow, p.hand, w, FOREARM_PROFILE),
+    p.elbow, p.hand, w.elbow / 2);
+  const palm = vol(`${key}-p`, hand.palm, p.elbow, p.hand, w.hand / 2);
+
+  if (!folded) {
+    return {
+      parts: [{ key, far, depth, bones: ['upperArm', 'foreArm'], vols: [upper, fore, palm] }],
+      hand,
+    };
+  }
   return {
-    part: {
-      key,
-      far,
-      depth: far ? depthOf(plan) : '',
-      bones: ['upperArm', 'foreArm'],
-      vols: [
-        vol(`${key}-u`, limbPath(p.shoulder, p.elbow, w.shoulder, w.elbow),
-          p.shoulder, p.elbow, w.shoulder / 2),
-        vol(`${key}-f`, limbPath(p.elbow, p.hand, w.elbow, w.wrist),
-          p.elbow, p.hand, w.elbow / 2),
-        vol(`${key}-p`, hand.palm, p.elbow, p.hand, w.hand / 2),
-      ],
-    },
+    parts: [
+      { key: `${key}u`, far, depth, bones: ['upperArm'], vols: [upper] },
+      { key: `${key}f`, far, depth, bones: ['foreArm'], vols: [fore, palm] },
+    ],
     hand,
   };
 }
@@ -322,14 +374,18 @@ function legPart(p: FigurePoints, plan: BodyPlan, far: boolean): Part {
     depth: far ? depthOf(plan) : '',
     bones: ['thigh', 'shin'],
     vols: [
-      vol(`${key}-t`, limbPath(p.hip, p.knee, w.thighTop, w.knee),
+      vol(`${key}-t`, limbLoft(p.hip, p.knee, w, THIGH_PROFILE),
         p.hip, p.knee, w.thighTop / 2),
-      vol(`${key}-s`, limbPath(p.knee, p.ankle, w.knee, w.ankle),
+      vol(`${key}-s`, limbLoft(p.knee, p.ankle, w, SHIN_PROFILE),
         p.knee, p.ankle, w.knee / 2),
       vol(`${key}-f`, footShape(p, plan, far ? 'far' : 'near'),
         p.ankle, p.toe, w.foot / 2),
     ],
   };
+}
+
+function trunkOutlineOf(p: FigurePoints, plan: BodyPlan): string {
+  return trunkOutline(p, plan);
 }
 
 function trunkPart(p: FigurePoints, plan: BodyPlan): Part {
@@ -355,14 +411,17 @@ function trunkPart(p: FigurePoints, plan: BodyPlan): Part {
    DRAWING
    ============================================================ */
 
+const TIER_WEIGHT = { primary: 0.62, secondary: 0.24, stabiliser: 0.1 } as const;
+
 function Bellies({
-  bones, boneMap, facing, primary, secondary, activation, pairSides,
+  bones, boneMap, facing, primary, secondary, stabilisers, activation, pairSides,
 }: {
   bones: BoneRef[];
   boneMap: Record<BoneRef, Bone>;
   facing: Facing;
   primary: ReadonlySet<string>;
   secondary: ReadonlySet<string>;
+  stabilisers: ReadonlySet<string>;
   activation: number;
   /** Whether paired shapes also draw their mirror. */
   pairSides: boolean;
@@ -377,16 +436,50 @@ function Bellies({
         const k = `${boneRef}-${belly.muscle}-${mirror ? 'm' : 'n'}`;
         out.push(<path key={`b${k}`} d={d} className="fig2__belly" />);
         const tone = primary.has(belly.muscle) ? 'primary'
-          : secondary.has(belly.muscle) ? 'secondary' : null;
+          : secondary.has(belly.muscle) ? 'secondary'
+            : stabilisers.has(belly.muscle) ? 'stabiliser' : null;
         if (tone) {
           out.push(
             <path key={`a${k}`} d={d}
               className={`fig2__act fig2__act--${tone}`}
-              style={{ opacity: activation * (tone === 'primary' ? 0.62 : 0.24) }} />,
+              style={{ opacity: activation * TIER_WEIGHT[tone] }} />,
           );
         }
       }
     }
+  }
+  return <>{out}</>;
+}
+
+/**
+ * The bony landmarks (§3, §5) — kneecap, elbow point, sternum, iliac
+ * crest. Between the muscle and the contour lines, because bone sits
+ * UNDER the modelling lines and OVER the muscle it is surrounded by.
+ *
+ * They never take activation. A kneecap that lit up when an exercise
+ * worked the quadriceps would be teaching a beginner anatomy that is
+ * simply false, which is a worse failure than a plain silhouette.
+ */
+function Plates({
+  bones, boneMap, facing, pairSides,
+}: {
+  bones: BoneRef[];
+  boneMap: Record<BoneRef, Bone>;
+  facing: Facing;
+  pairSides: boolean;
+}) {
+  const out: ReactNode[] = [];
+  for (const boneRef of bones) {
+    const bone = boneMap[boneRef];
+    platesOn(boneRef, facing).forEach((pl, i) => {
+      const sides = pl.pair && pairSides ? [false, true] : [false];
+      for (const mirror of sides) {
+        out.push(
+          <path key={`${boneRef}-${i}-${mirror ? 'm' : 'n'}`}
+            d={platePath(pl, bone, mirror)} className="fig2__bone" />,
+        );
+      }
+    });
   }
   return <>{out}</>;
 }
@@ -418,7 +511,8 @@ function Contours({
 
 /** One limb chain: ink, form, then its anatomy. */
 function PartG({
-  part, uid, boneMap, facing, primary, secondary, activation, pairSides, extra,
+  part, uid, boneMap, facing, primary, secondary, stabilisers,
+  activation, pairSides, extra,
 }: {
   part: Part;
   uid: string;
@@ -426,6 +520,7 @@ function PartG({
   facing: Facing;
   primary: ReadonlySet<string>;
   secondary: ReadonlySet<string>;
+  stabilisers: ReadonlySet<string>;
   activation: number;
   pairSides: boolean;
   extra?: ReactNode;
@@ -439,12 +534,32 @@ function PartG({
         {part.vols.map((v) => <path key={v.key} d={v.d} fill={`url(#${uid}-${v.key})`} />)}
       </g>
       <Bellies bones={part.bones} boneMap={boneMap} facing={facing}
-        primary={primary} secondary={secondary} activation={activation}
-        pairSides={pairSides} />
+        primary={primary} secondary={secondary} stabilisers={stabilisers}
+        activation={activation} pairSides={pairSides} />
+      <Plates bones={part.bones} boneMap={boneMap} facing={facing} pairSides={pairSides} />
       <Contours bones={part.bones} boneMap={boneMap} facing={facing} pairSides={pairSides} />
       {extra}
     </g>
   );
+}
+
+/**
+ * CONTACT OCCLUSION (§12) — the shadow a limb casts on the torso where
+ * it enters it.
+ *
+ * Without it an arm in profile is a hard-edged shape lying ON the
+ * chest: correct depth order, and still a cut-out rather than a limb
+ * attached to a body. The armpit and the groin are where the eye looks
+ * to decide, and they are dark on every body.
+ *
+ * This is NOT the rejected "opacity as a brightness control": that
+ * dimmed a whole volume to fake distance and turned the figure to
+ * glass. This adds shading, inside the silhouette, from a shape that
+ * is genuinely there — and it is clipped to the trunk, so it can never
+ * leak onto the stage.
+ */
+function Occlusion({ at, r, id }: { at: Pt; r: number; id: string }) {
+  return <circle cx={at[0]} cy={at[1]} r={r} fill={`url(#${id})`} />;
 }
 
 /** The contact shadow under a point that is on or near the floor (§18). */
@@ -467,6 +582,8 @@ export interface FigureProps {
   primary?: ReadonlySet<string>;
   /** Muscle keys to light up faintly. */
   secondary?: ReadonlySet<string>;
+  /** Muscle keys that only HOLD the position — the faintest tier (§9). */
+  stabilisers?: ReadonlySet<string>;
   /** 0–1, from the animation. Drives how hard the activation reads (§9). */
   activation?: number;
   /** True when the hands are on an implement — changes the grip. */
@@ -477,13 +594,19 @@ export interface FigureProps {
    * what makes a hand look like it is holding the thing.
    */
   kit?: ReactNode;
+  /**
+   * The whole grip assembly — both arms, the implement and both sets
+   * of fingers — drawn BEFORE the trunk rather than around it, for
+   * movements held behind the back (§12). Depth by paint order.
+   */
+  gripBehind?: boolean;
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
 
 export const Figure = memo(function Figure({
-  pose, plan, far: farPose, primary = EMPTY, secondary = EMPTY,
-  activation = 0, holding = false, kit,
+  pose, plan, far: farPose, primary = EMPTY, secondary = EMPTY, stabilisers = EMPTY,
+  activation = 0, holding = false, kit, gripBehind = false,
 }: FigureProps) {
   const uid = useId().replace(/:/g, '');
   const facing = plan.facing;
@@ -492,18 +615,20 @@ export const Figure = memo(function Figure({
   const off = offsetSide(resolvePose(farPose), plan, 'far');
   const midline = resolvePose(pose);
 
+  const w = plan.widths;
+  const trunkD = trunkOutlineOf(midline, plan);
   const trunk = trunkPart(midline, plan);
   const nearLeg = legPart(near, plan, false);
   const farLeg = legPart(off, plan, true);
-  const nearArm = armPart(near, plan, false, holding);
-  const farArm = armPart(off, plan, true, holding);
+  const nearArm = armParts(near, plan, false, holding);
+  const farArm = armParts(off, plan, true, holding);
 
   const boneNear = bonesOf(near, plan);
   const boneFar = bonesOf(off, plan);
   const boneMid = bonesOf(midline, plan);
   const head = headShapes(midline, facing);
 
-  const gradients = [trunk, farLeg, farArm.part, nearLeg, nearArm.part]
+  const gradients = [trunk, farLeg, ...farArm.parts, nearLeg, ...nearArm.parts]
     .flatMap((part) => part.vols.map((v) => ({
       id: `${uid}-${v.key}`, depth: part.depth, ...v.axis,
     })));
@@ -516,11 +641,54 @@ export const Figure = memo(function Figure({
    * has a rule about.
    */
   const pairSides = facing !== 'side';
-  const shared = { facing, primary, secondary, activation, uid };
+  const shared = { facing, primary, secondary, stabilisers, activation, uid };
+
+  /*
+   * The grip assembly, as one block so it can be placed in front of
+   * the body or behind it without a second code path.
+   *
+   * Inside it the order never changes: the FAR arm, the implement,
+   * the far fingers, the near arm, the near fingers. The implement is
+   * therefore always between the palms and the fingers (§4, §12) —
+   * the one ordering that is the difference between a person holding
+   * a barbell and a person standing next to one — and a two-handed
+   * grip closes both hands on it without the far one landing in front
+   * of the near one.
+   */
+  const grip = (
+    <>
+      {gripBehind && farArm.parts.map((part) => (
+        <PartG {...shared} key={part.key} part={part} boneMap={boneFar} pairSides={false} />
+      ))}
+      {kit}
+      <g className={`fig2__part${depthOf(plan)}`}>
+        <g className="fig2__ink">{farArm.hand.fingers.map((d, i) => <path key={i} d={d} />)}</g>
+        <g className="fig2__form">{farArm.hand.fingers.map((d, i) => <path key={i} d={d} />)}</g>
+      </g>
+      {nearArm.parts.map((part, i) => (
+        <PartG {...shared} key={part.key} part={part} boneMap={boneNear} pairSides={false}
+          extra={i === nearArm.parts.length - 1
+            ? <path d={nearArm.hand.knuckle} className="fig2__line fig2__line--fine" />
+            : undefined} />
+      ))}
+      <g className="fig2__part">
+        <g className="fig2__ink">{nearArm.hand.fingers.map((d, i) => <path key={i} d={d} />)}</g>
+        <g className="fig2__form">{nearArm.hand.fingers.map((d, i) => <path key={i} d={d} />)}</g>
+      </g>
+    </>
+  );
 
   return (
     <>
       <defs>
+        <radialGradient id={`${uid}-occ`}>
+          <stop offset="0" className="fig2__occ-in" />
+          <stop offset="0.55" className="fig2__occ-mid" />
+          <stop offset="1" className="fig2__occ-out" />
+        </radialGradient>
+        <clipPath id={`${uid}-trunkclip`}>
+          <path d={trunkD} />
+        </clipPath>
         {gradients.map((g) => (
           <linearGradient key={g.id} id={g.id} gradientUnits="userSpaceOnUse"
             x1={g.x1} y1={g.y1} x2={g.x2} y2={g.y2}
@@ -532,13 +700,23 @@ export const Figure = memo(function Figure({
         ))}
       </defs>
 
-      <Contact at={near.toe} />
-      <Contact at={off.toe} />
+      <Contact at={facing === 'side' ? near.toe : near.ankle} />
+      <Contact at={facing === 'side' ? off.toe : off.ankle} />
 
       <PartG {...shared} part={farLeg} boneMap={boneFar} pairSides={false} />
-      <PartG {...shared} part={farArm.part} boneMap={boneFar} pairSides={false} />
+      {!gripBehind && farArm.parts.map((part) => (
+        <PartG {...shared} key={part.key} part={part} boneMap={boneFar} pairSides={false} />
+      ))}
+      {gripBehind && grip}
 
       <PartG {...shared} part={trunk} boneMap={boneMid} pairSides={pairSides} />
+
+      <g clipPath={`url(#${uid}-trunkclip)`}>
+        <Occlusion at={off.shoulder} r={w.shoulder * 0.92} id={`${uid}-occ`} />
+        <Occlusion at={off.hip} r={w.thighTop * 0.85} id={`${uid}-occ`} />
+        <Occlusion at={near.shoulder} r={w.shoulder * 0.92} id={`${uid}-occ`} />
+        <Occlusion at={near.hip} r={w.thighTop * 0.85} id={`${uid}-occ`} />
+      </g>
 
       {/* The head is its own part: it carries no muscle and it has to
           sit over the neck rather than share a contour with it. */}
@@ -556,21 +734,7 @@ export const Figure = memo(function Figure({
 
       <PartG {...shared} part={nearLeg} boneMap={boneNear} pairSides={false} />
 
-      {/* The implement, then the FAR fingers, then the near arm. A
-          two-handed grip therefore closes both hands on the bar
-          without putting the far one in front of the near one. */}
-      {kit}
-      <g className={`fig2__part${depthOf(plan)}`}>
-        <g className="fig2__ink">{farArm.hand.fingers.map((d, i) => <path key={i} d={d} />)}</g>
-        <g className="fig2__form">{farArm.hand.fingers.map((d, i) => <path key={i} d={d} />)}</g>
-      </g>
-
-      <PartG {...shared} part={nearArm.part} boneMap={boneNear} pairSides={false}
-        extra={<path d={nearArm.hand.knuckle} className="fig2__line fig2__line--fine" />} />
-      <g className="fig2__part">
-        <g className="fig2__ink">{nearArm.hand.fingers.map((d, i) => <path key={i} d={d} />)}</g>
-        <g className="fig2__form">{nearArm.hand.fingers.map((d, i) => <path key={i} d={d} />)}</g>
-      </g>
+      {!gripBehind && grip}
     </>
   );
 });
@@ -591,9 +755,9 @@ export function gripsOf(pose: Pose, farPose: Pose, plan: BodyPlan): Grip[] {
 /** The far-side pose for a frame, with any per-frame override applied. */
 export function farPoseFor(
   pose: Pose, plan: BodyPlan, symmetry: Symmetry,
-  partner?: Pose, override?: Partial<Pose>,
+  partner?: Pose, override?: Partial<Pose>, planes: LimbPlanes = SAGITTAL,
 ): Pose {
-  return { ...farSideOf(pose, symmetry, partner, plan), ...(override ?? {}) };
+  return { ...farSideOf(pose, symmetry, partner, plan, planes), ...(override ?? {}) };
 }
 
 /* ============================================================
@@ -627,8 +791,11 @@ export const MotionPath = memo(function MotionPath({
     <g aria-hidden="true">
       <path d={d} className="fig2__pathhalo" />
       <path d={d} className="fig2__path" />
-      <circle cx={points[0][0]} cy={points[0][1]} r="1.8" className="fig2__pathstart" />
-      <path d="M 0 0 L -4.4 2.5 L -3.2 0 L -4.4 -2.5 Z" className="fig2__pathtip"
+      <circle cx={points[0][0]} cy={points[0][1]} r="1.15" className="fig2__pathstart" />
+      {/* Small enough to be a direction, not a sign. An arrowhead the
+          size of a hand stops being an indicator and starts being the
+          subject of the drawing (§14). */}
+      <path d="M 0 0 L -2.6 1.5 L -1.9 0 L -2.6 -1.5 Z" className="fig2__pathtip"
         transform={`translate(${head[0].toFixed(2)} ${head[1].toFixed(2)}) rotate(${ang.toFixed(1)})`} />
     </g>
   );

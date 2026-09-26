@@ -140,7 +140,7 @@ export const Scene = memo(function Scene({ scene, plan }: { scene: SceneGlyph; p
               <Tube x={56} y={70} w={4} h={20} />
             </g>
           )}
-          <Pad x={50 - 26 * spread} y={63} w={52 * spread} h={7.4} />
+          <Pad x={50 - 29 * spread} y={63} w={58 * spread} h={7.4} />
           <Tube x={21} y={70} w={4.4} h={22} />
           <Tube x={57} y={70} w={4.4} h={22} />
           <Tube x={15} y={88.6} w={17} h={3.6} />

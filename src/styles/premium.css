@@ -805,6 +805,13 @@
    activation uses, which is what makes a highlight incapable of
    landing anywhere but on the muscle it names (§8). */
 .fig2__belly { fill: var(--fig-model); opacity: 0.2; stroke: none; }
+/* Bone under skin, not muscle under skin: a hard, light plane rather
+   than the soft one `--fig-model` paints. A kneecap that read like a
+   muscle would be one more shape to decode instead of the landmark
+   that tells you where the joint is. */
+.fig2__bone { fill: var(--fig-lit); opacity: 0.3; stroke: none; }
+.fig2__part--mid .fig2__bone { opacity: 0.22; }
+.fig2__part--far .fig2__bone { opacity: 0.12; }
 .fig2__part--mid .fig2__belly { opacity: 0.16; }
 .fig2__part--far .fig2__belly { opacity: 0.1; }
 .fig2__line {
@@ -831,6 +838,11 @@
 .fig2__stage-top { stop-color: var(--fig-stage-top); }
 .fig2__stage-base { stop-color: var(--fig-stage-base); }
 .fig2__contact { fill: var(--fig-contact); }
+/* Where a limb enters the trunk (§12). Clipped to the trunk outline, so
+   it shades the body and never the stage. */
+.fig2__occ-in { stop-color: var(--fig-core); stop-opacity: 0.5; }
+.fig2__occ-mid { stop-color: var(--fig-core); stop-opacity: 0.2; }
+.fig2__occ-out { stop-color: var(--fig-core); stop-opacity: 0; }
 .fig2__floorwash { fill: var(--fig-kit); opacity: 0.07; }
 .fig2__ground {
   stroke: var(--fig-kit); stroke-width: calc(1.1 * var(--fig-u, 1)); opacity: 0.8;
@@ -842,14 +854,15 @@
    legible where it crosses a limb. */
 .fig2__path {
   fill: none; stroke: var(--guide);
-  stroke-width: calc(0.95 * var(--fig-u, 1));
-  stroke-linecap: round; stroke-dasharray: calc(2.6 * var(--fig-u, 1)) calc(2 * var(--fig-u, 1));
-  opacity: 0.85;
+  stroke-width: calc(0.55 * var(--fig-u, 1));
+  stroke-linecap: round;
+  stroke-dasharray: calc(1.7 * var(--fig-u, 1)) calc(1.5 * var(--fig-u, 1));
+  opacity: 0.7;
 }
 .fig2__pathhalo {
   fill: none; stroke: var(--fig-stage-top);
-  stroke-width: calc(2.6 * var(--fig-u, 1));
-  stroke-linecap: round; opacity: 0.75;
+  stroke-width: calc(1.9 * var(--fig-u, 1));
+  stroke-linecap: round; opacity: 0.6;
 }
 .fig2__pathstart {
   fill: none; stroke: var(--guide);
@@ -1069,6 +1082,14 @@
 .mmap__swatch--secondary {
   background: var(--muscle-secondary);
   box-shadow: inset 0 0 0 1px var(--muscle-primary);
+}
+/* The stabiliser swatch is the outline alone: it is the faintest tier
+   on the figure, and a filled chip would promise more marking than the
+   body actually shows. */
+.mmap__swatch--stabiliser {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--muscle-primary);
+  opacity: 0.6;
 }
 .mmap__none { font-size: var(--fs-12); color: var(--text-3); }
 

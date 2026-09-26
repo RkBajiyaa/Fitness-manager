@@ -22,9 +22,12 @@ import { type MovementDrawing, type Pose, pose, STANDING } from './figure';
 
 /** Lying supine on a flat bench, head to the left. */
 const SUPINE: Pose = {
+  // thigh/shin solved so the ankle lands ON the floor and stays there:
+  // §10 asks for planted feet, and a bench press where the feet drift
+  // is a bench press with nothing to push against.
   hip: [56, 66], spine: 178, neck: 178,
-  upperArm: -85, foreArm: -85,
-  thigh: 20, shin: 80, foot: 0,
+  upperArm: -90, foreArm: -90,
+  thigh: 26, shin: 77, foot: 0,
 };
 
 /** Reclined on a 30° incline bench. */
@@ -74,20 +77,86 @@ const HANGING: Pose = {
  */
 const PU_LEGS: Partial<Pose> = { thigh: 88, shin: 92, foot: 30 };
 
+/** A back squat's arms: the upper arm points away, the forearm up. */
+const SQ_ARMS = { upperArm: 0.55, foreArm: 0.72 } as const;
+
 export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   /* ============ horizontal push ============ */
   {
+    /* ------------------------------------------------------------
+       THE BENCH PRESS — benchmark two.
+
+       SIDE, not three-quarter, and that is a correction rather than a
+       preference. A pose stores angles in the picture plane and draws
+       every segment at full length, so declaring a camera also asserts
+       that the body is side-on to it. For a STANDING figure the spine
+       is vertical and that holds at any camera angle, which is why the
+       squat turns freely. For a figure LYING DOWN the spine is
+       horizontal, so turning the camera would foreshorten the whole
+       torso — and at three-quarters the plan was instead separating
+       the two shoulders along the body's own length, putting the near
+       shoulder a hand's width nearer the feet than the far one.
+
+       Profile is also what §13 asks for on its merits: a bench press
+       is bar path, elbow angle and the arch, and all three are
+       sagittal facts.
+
+       The arms foreshorten (§5). At the bottom the upper arms point
+       away from a side-on viewer — the grip is wider than the
+       shoulders — so they draw at half length, which is what puts the
+       elbow beside the ribs instead of a forearm's reach past them.
+       ------------------------------------------------------------ */
     key: 'press_flat', name: 'Flat press', scene: 'flat_bench', prop: 'barbell',
-    view: 'three_quarter', tempoScale: 1.05,
+    armPlane: 'frontal',
+    view: 'side', tempoScale: 1.72, effortFrame: 2,
+    stabilisers: ['abs', 'rotator_cuff'],
     frames: [
-      { label: 'Setup', pose: SUPINE, cue: 'Shoulder blades pinned back and down.' },
-      { label: 'Lower', ease: 'smooth', moveShare: 0.84, pose: pose(SUPINE, { upperArm: 10, foreArm: -100 }), holdMs: 900, cue: 'To mid-chest. Elbows about 45°, not flared.' },
-      { label: 'Press', ease: 'settle', moveShare: 0.62, pose: SUPINE, holdMs: 700, cue: 'Drive up. Ribs stay down.' },
+      {
+        label: 'Setup', ease: 'decel', moveShare: 0.62, holdMs: 1150,
+        pose: SUPINE,
+        cue: 'Shoulder blades pinned back and down, feet flat on the floor.',
+      },
+      {
+        label: 'Lower', ease: 'smooth', moveShare: 1, holdMs: 620,
+        pose: pose(SUPINE, {
+          upperArm: -55, foreArm: -100,
+          short: { upperArm: 0.62, foreArm: 0.955 },
+        }),
+        cue: 'Down under control. Elbows about 45°, not flared wide.',
+      },
+      {
+        label: 'Chest', ease: 'decel', moveShare: 0.74, holdMs: 1150,
+        pose: pose(SUPINE, {
+          upperArm: 35, foreArm: -92,
+          short: { upperArm: 0.5, foreArm: 0.97 },
+        }),
+        cue: 'The bar touches the mid-chest. Ribs stay down.',
+      },
+      {
+        label: 'Press', ease: 'accel', moveShare: 1, holdMs: 560,
+        pose: pose(SUPINE, {
+          upperArm: -55, foreArm: -100,
+          short: { upperArm: 0.62, foreArm: 0.955 },
+        }),
+        cue: 'Drive up and slightly back, over the shoulders.',
+      },
     ],
+    mistake: {
+      label: 'Bar drifts to the throat',
+      at: 2,
+      pose: pose(SUPINE, {
+        upperArm: -140, foreArm: -77,
+        short: { upperArm: 0.5, foreArm: 0.84 },
+      }),
+      why: 'The bar belongs on the mid-chest — higher and the load moves away from the muscles doing the work.',
+    },
   },
   {
+    // Side for the same reason the flat press is: a reclined trunk is
+    // 65° off vertical, so a turned camera would foreshorten it.
     key: 'press_incline', name: 'Incline press', scene: 'incline_bench', prop: 'dumbbell',
-    view: 'three_quarter', tempoScale: 1.05,
+    armPlane: 'frontal',
+    view: 'side', tempoScale: 1.05,
     frames: [
       { label: 'Setup', pose: RECLINED, cue: 'Bench at 30°. Any steeper is a shoulder press.' },
       { label: 'Lower', ease: 'smooth', moveShare: 0.84, pose: pose(RECLINED, { upperArm: -5, foreArm: -110 }), holdMs: 900, cue: 'Down to the upper chest, under control.' },
@@ -96,6 +165,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'fly', name: 'Fly', scene: 'flat_bench', prop: 'dumbbell',
+    armPlane: 'frontal',
     frames: [
       { label: 'Top', pose: pose(SUPINE, { upperArm: -85, foreArm: -80 }) },
       { label: 'Open', pose: pose(SUPINE, { upperArm: -25, foreArm: -55 }), holdMs: 900, cue: 'Elbow angle stays fixed — this is not a press.' },
@@ -141,6 +211,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
      * typechecks and the picture is of a barbell cut in half.
      */
     key: 'press_overhead', name: 'Overhead press', scene: 'floor', prop: 'barbell',
+    armPlane: 'frontal',
     view: 'three_quarter', tempoScale: 1.05,
     frames: [
       {
@@ -160,6 +231,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'raise_lateral', name: 'Lateral raise', scene: 'floor', prop: 'dumbbell',
+    armPlane: 'frontal',
     view: 'front', tempoScale: 1.2,
     frames: [
       { label: 'Start', pose: pose(STANDING, { upperArm: 82, foreArm: 86 }), cue: 'Arms by your sides, slight bend at the elbow.' },
@@ -171,6 +243,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   /* ============ vertical pull ============ */
   {
     key: 'pulldown', name: 'Pulldown', scene: 'lat_tower', prop: 'cable',
+    armPlane: 'frontal',
     /*
      * Three-quarters, not dead-on, and the reason is the SEAT. A
      * seated figure's thighs point at the camera, and a pose angle
@@ -195,6 +268,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'pull_up', name: 'Pull-up', scene: 'pull_bar', prop: 'none',
+    armPlane: 'frontal',
     view: 'front', tempoScale: 1.1,
     /*
      * The shared HANGING base tucks the knees so that a hang fits the
@@ -212,6 +286,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'hang', name: 'Hang', scene: 'pull_bar', prop: 'none',
+    armPlane: 'frontal',
     frames: [
       { label: 'Hang', pose: HANGING, holdMs: 1400 },
       { label: 'Pull down', pose: pose(HANGING, { hip: [50, 57] }), holdMs: 1400 },
@@ -244,6 +319,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'face_pull', name: 'Face pull', scene: 'cable_tower', prop: 'cable',
+    armPlane: 'frontal',
     frames: [
       { label: 'Reach', pose: pose(STANDING, { upperArm: -35, foreArm: -30 }) },
       { label: 'Pull', pose: pose(STANDING, { upperArm: -5, foreArm: -155 }), holdMs: 900, cue: 'Rope to the forehead, elbows high and wide.' },
@@ -253,30 +329,103 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
 
   /* ============ squat ============ */
   {
+    /*
+     * The upper arm points BACK from a three-quarter viewer and the
+     * forearm comes up and slightly forward, so neither is side-on and
+     * neither draws at full length. Without this the elbow lands at
+     * the navel and the folded arm unions into a paddle across the
+     * chest; with it the elbow sits at mid-torso where a back squat
+     * actually puts it.
+     */
+    /* eslint-disable-next-line */
+    /* ------------------------------------------------------------
+       THE BACK SQUAT — the benchmark this renderer was built against.
+
+       Three things here are not like the other drawings, and all
+       three are the brief's:
+
+       · EVERY KEY IS SOLVED FROM A PLANTED ANKLE (§10). A pose hangs
+         off the hip, so interpolating the angles between a standing
+         figure and a squatting one slides the foot four units forward
+         and a unit through the floor — the figure squats on roller
+         skates. The fix is not an IK solver: it is enough keys, each
+         with its hip solved BACKWARDS from the ankle it must keep.
+         With four down and two up the worst mid-key drift is 0.83
+         units, a fifth of a foot width, which nobody can see.
+       · SIX KEYS, FOUR PHASES (§15). The two shaping keys are
+         `silent`: they carry the travel and none of the vocabulary.
+       · THE ARMS ARE FRONTAL (§13). A back squat's hands go out to
+         the sides of the bar, so the far arm is a genuine mirror. The
+         legs are sagittal — the knees both travel forward — which is
+         what stops a three-quarter squat being drawn as a lunge.
+       ------------------------------------------------------------ */
     key: 'squat', name: 'Squat', scene: 'rack', prop: 'barbell',
-    view: 'three_quarter', tempoScale: 1.15,
+    armPlane: 'frontal', gripBehind: true,
+    view: 'three_quarter', tempoScale: 1.42,
+    /*
+     * Named, not inferred. `effortIndex` falls back to the longest
+     * hold, and the top of a squat is held for about as long as the
+     * bottom — so the fallback picked STANDING as the working
+     * position, and the quadriceps lit up brightest at the one moment
+     * in the repetition they are doing the least.
+     */
+    effortFrame: 3,
+    stabilisers: ['abs', 'obliques', 'spinal_erectors'],
     frames: [
-      { label: 'Stand', pose: pose(STANDING, { upperArm: 150, foreArm: -30 }), cue: 'Bar on the upper back, feet shoulder-width.' },
       {
-        label: 'Descend', ease: 'smooth', moveShare: 0.86,
-        pose: pose(STANDING, { hip: [48, 72], spine: -105, thigh: 25, shin: 108, foot: 0, upperArm: 150, foreArm: -30 }),
-        holdMs: 900,
-        cue: 'Hips back and down. Knees track over the toes.',
+        label: 'Stand', ease: 'settle', moveShare: 0.6, holdMs: 1000,
+        pose: { hip: [50, 56], spine: -90, chest: -90, neck: -90,
+          upperArm: 84, foreArm: -78, short: SQ_ARMS, thigh: 88, shin: 90, foot: 0 },
+        cue: 'Bar across the upper back, feet shoulder-width, chest tall.',
       },
-      { label: 'Drive', ease: 'accel', moveShare: 0.6, pose: pose(STANDING, { upperArm: 150, foreArm: -30 }), holdMs: 700, cue: 'Push the floor away. Chest stays up.' },
+      {
+        label: 'Descend', ease: 'smooth', moveShare: 1, holdMs: 560,
+        pose: { hip: [44.4, 58.1], spine: -79, chest: -82, neck: -86,
+          upperArm: 84, foreArm: -78, short: SQ_ARMS, thigh: 62, shin: 96, foot: 0 },
+        cue: 'Hips back and down together. Knees track out over the toes.',
+      },
+      {
+        silent: true, ease: 'linear', moveShare: 1, holdMs: 560,
+        label: 'Descend',
+        pose: { hip: [40, 65], spine: -66, chest: -71, neck: -80,
+          upperArm: 84, foreArm: -78, short: SQ_ARMS, thigh: 30, shin: 104, foot: 0 },
+      },
+      {
+        label: 'Bottom', ease: 'decel', moveShare: 0.7, holdMs: 980,
+        pose: { hip: [40.1, 76], spine: -58, chest: -64, neck: -76,
+          upperArm: 84, foreArm: -78, short: SQ_ARMS, thigh: -6, shin: 112, foot: 0 },
+        cue: 'Hip crease just below the knee. Whole foot stays down.',
+      },
+      {
+        label: 'Drive', ease: 'accel', moveShare: 1, holdMs: 480,
+        pose: { hip: [40, 65], spine: -66, chest: -71, neck: -80,
+          upperArm: 84, foreArm: -78, short: SQ_ARMS, thigh: 30, shin: 104, foot: 0 },
+        cue: 'Push the floor away. Hips and chest rise together.',
+      },
+      {
+        silent: true, ease: 'linear', moveShare: 1, holdMs: 560,
+        label: 'Drive',
+        pose: { hip: [44.4, 58.1], spine: -79, chest: -82, neck: -86,
+          upperArm: 84, foreArm: -78, short: SQ_ARMS, thigh: 62, shin: 96, foot: 0 },
+      },
     ],
     mistake: {
+      /*
+       * Now an honest drawing rather than an approximate one. With two
+       * trunk segments the THORAX can drop while the lumbar segment
+       * holds its angle, which is exactly what "the chest falls" looks
+       * like on a real squat — and it is a different picture from
+       * simply leaning further forward, which is all one segment could
+       * ever say.
+       */
       label: 'Chest drops forward',
-      at: 1,
-      pose: pose(STANDING, { hip: [48, 72], spine: -128, thigh: 25, shin: 108, upperArm: 168, foreArm: -12 }),
+      at: 3,
+      pose: { hip: [40.1, 76], spine: -56, chest: -32, neck: -50,
+        upperArm: 74, foreArm: -62, thigh: -6, shin: 112, foot: 0 },
       why: 'The bar travels forward of the mid-foot, which turns a squat into a good morning.',
     },
   },
   {
-    // The one drawing that genuinely needed its own scenery. Without the
-    // reclined pad and the angled plate, a person on a leg press in
-    // strict profile is an unreadable zigzag — the machine IS the
-    // information here, not the posture.
     key: 'leg_press', name: 'Leg press', scene: 'press_sled', prop: 'none',
     view: 'side', tempoScale: 1.05,
     frames: [
@@ -317,17 +466,85 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
 
   /* ============ hinge ============ */
   {
+    /* ------------------------------------------------------------
+       THE DEADLIFT — benchmark three, and the one that most needed
+       the planted ankle.
+
+       It used to hinge from a hip that moved twelve units while the
+       angles stayed put, so between "Set" and "Stand" the ankle
+       travelled eight units forward and EIGHT AND A HALF UNITS BELOW
+       THE FLOOR. Every key here is solved backwards from an ankle that
+       does not move.
+
+       Two things the two-segment trunk buys, and both are the lift's
+       actual coaching points:
+
+       · the knee travels BACK as the bar rises (shin 101° → 95°),
+         which is what "push the floor away" looks like and what a
+         single hip-rooted interpolation could never show;
+       · "hips rise first" is now a drawing rather than a caption. The
+         wrong pose has the hip three units higher and the thorax ten
+         degrees flatter, at the same instant, with the hands still on
+         the bar — so the reader compares two setups, not a setup and
+         a lockout.
+
+       SIDE, deliberately, against §13's preference for three-quarter:
+       bar over mid-foot, shin angle, hip height and back angle are all
+       profile facts, and from three-quarters the near leg hides the
+       one relationship the lift is taught by.
+       ------------------------------------------------------------ */
     key: 'deadlift', name: 'Deadlift', scene: 'floor', prop: 'barbell',
-    view: 'side', tempoScale: 1.3,
+    view: 'side', tempoScale: 1.45, effortFrame: 1,
+    stabilisers: ['abs', 'traps', 'forearms'],
     frames: [
-      { label: 'Set', pose: pose(STANDING, { hip: [52, 68], spine: -125, thigh: 55, shin: 100, upperArm: 82, foreArm: 88 }), cue: 'Bar over mid-foot, shoulders just in front of it.' },
-      { label: 'Pull', ease: 'accel', moveShare: 0.66, pose: pose(STANDING, { upperArm: 82, foreArm: 88 }), holdMs: 900, cue: 'Push the floor away and stand tall. Back stays flat.' },
-      { label: 'Lower', ease: 'smooth', moveShare: 0.82, pose: pose(STANDING, { hip: [52, 68], spine: -125, thigh: 55, shin: 100, upperArm: 82, foreArm: 88 }), holdMs: 700 },
+      {
+        label: 'Set', ease: 'smooth', moveShare: 0.55, holdMs: 1100,
+        pose: {
+          hip: [37, 72.3], spine: -40, chest: -44, neck: -30,
+          upperArm: 93, foreArm: 93, thigh: 3.5, shin: 101.4, foot: 0,
+        },
+        cue: 'Bar over mid-foot, shoulders just in front of it, chest up.',
+      },
+      {
+        label: 'Pull', ease: 'accel', moveShare: 1, holdMs: 620,
+        pose: {
+          hip: [37.8, 63.8], spine: -42, chest: -49, neck: -36,
+          upperArm: 93.5, foreArm: 93.5, thigh: 33, shin: 94.9, foot: 0,
+        },
+        cue: 'Push the floor away. The bar and the hips rise together.',
+      },
+      {
+        label: 'Stand', ease: 'settle', moveShare: 0.68, holdMs: 1050,
+        pose: {
+          hip: [50, 56], spine: -90, chest: -90, neck: -90,
+          upperArm: 93.1, foreArm: 93.1, thigh: 88.5, shin: 89.4, foot: 0,
+        },
+        cue: 'Stand tall. Squeeze the hips; do not lean back.',
+      },
+      {
+        label: 'Lower', ease: 'smooth', moveShare: 1, holdMs: 620,
+        pose: {
+          hip: [37.8, 63.8], spine: -42, chest: -49, neck: -36,
+          upperArm: 93.5, foreArm: 93.5, thigh: 33, shin: 94.9, foot: 0,
+        },
+        cue: 'Hips back first, then bend the knees.',
+      },
+      {
+        silent: true, ease: 'smooth', moveShare: 1, holdMs: 700,
+        label: 'Lower',
+        pose: {
+          hip: [37, 72.3], spine: -40, chest: -44, neck: -30,
+          upperArm: 93, foreArm: 93, thigh: 3.5, shin: 101.4, foot: 0,
+        },
+      },
     ],
     mistake: {
       label: 'Hips rise first',
       at: 0,
-      pose: pose(STANDING, { hip: [52, 68], spine: -108, neck: -78, thigh: 62, shin: 98, upperArm: 76, foreArm: 84 }),
+      pose: {
+        hip: [37, 69], spine: -30, chest: -32, neck: -22,
+        upperArm: 99.1, foreArm: 99.1, thigh: 14.5, shin: 99.7, foot: 0,
+      },
       why: 'The hips rise before the bar does, so the back takes the load the legs were meant to.',
     },
   },
@@ -420,6 +637,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
     // Straight legs, so this one cannot share the tucked HANGING base —
     // the whole point of the exercise is the leg travelling.
     key: 'leg_raise', name: 'Leg raise', scene: 'pull_bar', prop: 'none',
+    armPlane: 'frontal',
     frames: [
       { label: 'Hang', pose: pose(HANGING, { thigh: 88, shin: 86, foot: -20 }) },
       { label: 'Raise', pose: pose(HANGING, { thigh: 2, shin: 4, foot: -30 }), holdMs: 900, cue: 'Lift with the abs, not by swinging.' },
@@ -462,6 +680,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'row_erg', name: 'Row', scene: 'rower', prop: 'machine_handle', symmetry: 'mirror',
+    armPlane: 'frontal',
     frames: [
       { label: 'Catch', pose: pose(SEATED, { hip: [44, 76], spine: -70, thigh: -42, shin: 70, foot: -40, upperArm: -12, foreArm: -6 }) },
       { label: 'Drive', pose: pose(SEATED, { hip: [56, 76], spine: -102, thigh: -6, shin: 4, foot: -40, upperArm: 60, foreArm: 172 }), holdMs: 700 },
@@ -479,6 +698,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'jump_rope', name: 'Jump rope', scene: 'floor', prop: 'rope',
+    armPlane: 'frontal',
     frames: [
       { label: 'Land', pose: pose(STANDING, { hip: [50, 60], thigh: 84, shin: 96, foot: -25, upperArm: 70, foreArm: 30 }), holdMs: 340 },
       { label: 'Hop', pose: pose(STANDING, { hip: [50, 50], thigh: 88, shin: 90, foot: -50, upperArm: 70, foreArm: 30 }), holdMs: 340 },
@@ -541,6 +761,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'arm_circle', name: 'Arm circles', scene: 'floor', prop: 'none',
+    armPlane: 'frontal',
     /*
      * QUARTERS, not thirds, and `linear` throughout.
      *
@@ -560,6 +781,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
   },
   {
     key: 'shoulder_rotation', name: 'Shoulder rotation', scene: 'floor', prop: 'band',
+    armPlane: 'frontal',
     frames: [
       { label: 'In', pose: pose(STANDING, { upperArm: 84, foreArm: 4 }) },
       { label: 'Out', pose: pose(STANDING, { upperArm: 84, foreArm: -80 }), holdMs: 800 },
@@ -588,6 +810,7 @@ export const MOVEMENT_DRAWINGS: MovementDrawing[] = [
     // dumbbell straight through the figure's head — on day 1 of the
     // beginner plan, which is the first drawing most members ever see.
     key: 'squat_goblet', name: 'Goblet squat', scene: 'floor', prop: 'dumbbell',
+    armPlane: 'frontal',
     frames: [
       { label: 'Stand', pose: pose(STANDING, { upperArm: 70, foreArm: -100 }) },
       {

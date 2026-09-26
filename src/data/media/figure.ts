@@ -47,9 +47,26 @@
    ============================================================ */
 
 /** Segment lengths, in viewBox units. Fixed — the figure never changes build. */
+/*
+ * CANONICAL PROPORTIONS (§1).
+ *
+ * Measured against the RENDERED figure rather than guessed, and two
+ * of them were out far enough to be the reason it read as a toy:
+ *
+ *            was      now     an athletic adult
+ *   torso   0.325 H  0.316 H       0.288 H
+ *   head +
+ *   neck    0.225 H  0.199 H       0.182 H
+ *
+ * A big head on a long neck over short legs is the toy-figure
+ * silhouette, and no amount of shading fixes it. The legs could not
+ * grow — every pose stores a hip position and lengthening the leg puts
+ * the feet through the floor — so the correction is in the two
+ * segments above the hip, which move nothing below it.
+ */
 export const SEGMENTS = {
-  spine: 26,
-  neck: 7,
+  spine: 23.5,
+  neck: 4.6,
   upperArm: 13,
   foreArm: 13,
   thigh: 17,
@@ -58,7 +75,7 @@ export const SEGMENTS = {
 } as const;
 
 /** Head radius, in viewBox units. */
-export const HEAD_RADIUS = 5.5;
+export const HEAD_RADIUS = 5.1;
 
 /**
  * Body thickness at each joint, in viewBox units.
@@ -75,8 +92,8 @@ export const HEAD_RADIUS = 5.5;
  *     build seen from the side, not a barrel.
  */
 export const WIDTHS = {
-  chest: 15,
-  waist: 11.2,
+  chest: 15.6,
+  waist: 10.8,
   hipTop: 13.4,
   shoulder: 8.0,
   elbow: 5.8,
@@ -121,9 +138,9 @@ export type BodyWidths = Readonly<Record<keyof typeof WIDTHS, number>>;
 
 /** Breadth at each joint with the body facing us. */
 export const FRONT_WIDTHS: BodyWidths = {
-  chest: 17.4,
-  waist: 12.6,
-  hipTop: 14.6,
+  chest: 19.2,
+  waist: 12.0,
+  hipTop: 14.2,
   shoulder: 8.2,
   elbow: 6.0,
   wrist: 4.4,
@@ -164,25 +181,40 @@ function blend(t: number): BodyWidths {
  * it easiest to understand (§15), and a dial invites somebody to
  * pick 41° and get a figure nobody has ever looked at.
  */
+/*
+ * A NOTE ON `shoulderHalf`, WHICH WAS WRONG AND MATTERED.
+ *
+ * It used to be 7.0 from the front, against a chest half-width of
+ * 8.7 — which put the shoulder JOINT nearly two units inside the rib
+ * cage. Every arm therefore started behind the chest, and an arm that
+ * folds (a back squat, a front rack, a curl at the top) came out as a
+ * white slab lying across the torso rather than as an arm beside it.
+ *
+ * On a real body the acromion is OUTSIDE the rib cage: biacromial
+ * breadth is about a quarter wider than chest breadth, which is the
+ * proportion that makes a trained upper body read as one. So the
+ * shoulders now sit outside the chest, and the three-quarter values
+ * are the frontal ones scaled by the same cosine the widths are.
+ */
 export const PLANS: Record<FigureView, BodyPlan> = {
   side: {
     view: 'side', widths: WIDTHS, shoulderHalf: 0, hipHalf: 0,
     lateralShare: 0, facing: 'side', toward: 1,
   },
   three_quarter: {
-    view: 'three_quarter', widths: blend(0.52), shoulderHalf: 4.2, hipHalf: 3.0,
+    view: 'three_quarter', widths: blend(0.52), shoulderHalf: 7.0, hipHalf: 4.4,
     lateralShare: 0.62, facing: 'front', toward: 1,
   },
   front: {
-    view: 'front', widths: FRONT_WIDTHS, shoulderHalf: 7.0, hipHalf: 5.4,
+    view: 'front', widths: FRONT_WIDTHS, shoulderHalf: 9.2, hipHalf: 6.0,
     lateralShare: 1, facing: 'front', toward: 1,
   },
   three_quarter_rear: {
-    view: 'three_quarter_rear', widths: blend(0.52), shoulderHalf: 4.2, hipHalf: 3.0,
+    view: 'three_quarter_rear', widths: blend(0.52), shoulderHalf: 7.0, hipHalf: 4.4,
     lateralShare: 0.62, facing: 'back', toward: -1,
   },
   rear: {
-    view: 'rear', widths: FRONT_WIDTHS, shoulderHalf: 7.0, hipHalf: 5.4,
+    view: 'rear', widths: FRONT_WIDTHS, shoulderHalf: 9.2, hipHalf: 6.0,
     lateralShare: 1, facing: 'back', toward: -1,
   },
 };
@@ -203,11 +235,74 @@ export function planFor(view: FigureView = 'side'): BodyPlan {
  * (see `farSideOf`), which keeps the content small and means a
  * pose correction fixes both sides at once.
  */
+/** Picture-plane length of a limb segment, as a fraction of its own. */
+export interface Foreshorten {
+  upperArm?: number;
+  foreArm?: number;
+  thigh?: number;
+  shin?: number;
+}
+
+/** Below this a segment is so short it reads as a missing limb. */
+export const MIN_FORESHORTEN = 0.45;
+
 export interface Pose {
   /** Root joint position in the 100×100 box. */
   hip: readonly [number, number];
-  /** Hip → shoulder. −90 is a fully upright torso. */
+  /**
+   * THE LUMBAR SEGMENT: hip → waist. −90 is a fully upright low back.
+   *
+   * It used to be the whole torso, and `chest` below is why it is not
+   * any more. Every drawing authored before that change still reads
+   * correctly, because a pose with no `chest` is a straight spine and
+   * a straight spine puts the shoulder exactly where one segment did.
+   */
   spine: number;
+  /**
+   * THE THORACIC SEGMENT: waist → shoulder. Defaults to `spine`.
+   *
+   * One segment could not tell a hip hinge from a rounded back — the
+   * only thing it could say was "the torso is at −125°", and whether
+   * that torso was braced or folded was the reader's guess. Two can:
+   *
+   *   · `chest === spine`           a neutral, braced trunk;
+   *   · `chest` ABOVE `spine`       thoracic extension, the chest
+   *                                 lifted out of a hinge;
+   *   · `chest` BELOW `spine`       flexion, the chest dropping —
+   *                                 which is the single most common
+   *                                 fault on a squat and a deadlift
+   *                                 and was previously undrawable.
+   *
+   * The waist is at `WAIST_AT` along the trunk, so the pelvis rotates
+   * with the lumbar segment and the rib cage with the thoracic one.
+   * Every belly and contour in `musculature.ts` is attached to one or
+   * the other, which is why the abdominal wall now folds at the waist
+   * and the pectorals stay square to the ribs — with no extra data.
+   */
+  chest?: number;
+  /**
+   * FORESHORTENING: how much of each limb segment lies IN the picture
+   * plane, as a fraction of its true length (§5, §10).
+   *
+   * An angle alone is half of a polar coordinate. The other half is
+   * the length, and leaving it fixed says every limb is exactly
+   * side-on to the camera — which is why a back squat's upper arms,
+   * which genuinely point AWAY from a three-quarter viewer, drew at
+   * full thirteen units and put the elbow at the navel. Unioned with
+   * the forearm folding back over it, that is a paddle fifteen units
+   * wide against a seventeen-unit chest, and no choice of angle fixes
+   * it: the arm is too long because it is being drawn flat.
+   *
+   * So a drawing may shorten a segment. This is not a 3D model and
+   * does not pretend to be one — it is the second number an
+   * illustrator uses when a limb comes towards or goes away from the
+   * viewer, and `validateContent` keeps it in a range where it stays
+   * that rather than becoming a way to build a different person.
+   *
+   * Absent means 1: in the picture plane, full length, which is what
+   * all 43 original drawings assume and continue to get.
+   */
+  short?: Foreshorten;
   /** Shoulder → head. Usually a few degrees off the spine. */
   neck: number;
   /** Shoulder → elbow. */
@@ -247,6 +342,33 @@ export type SceneGlyph =
  */
 export type Ease = 'linear' | 'smooth' | 'accel' | 'decel' | 'settle';
 
+/**
+ * WHICH PLANE A LIMB PAIR'S DEVIATION LIES IN.
+ *
+ * This is the one fact a picture-plane angle genuinely cannot carry,
+ * and leaving it out drew a squat as a lunge.
+ *
+ * A pose stores the angle a limb makes ON THE PAGE, which is why a
+ * drawing can change camera without being re-authored. But the FAR
+ * limb has to be derived, and how it is derived depends on which way
+ * the near limb is really pointing in the body's own frame:
+ *
+ *   · `sagittal` — the deviation is FRONT-TO-BACK. A squat's knees
+ *     both travel forward, a row's elbows both travel back. Seen from
+ *     anywhere, the two limbs point the SAME way on the page, so the
+ *     far one is a copy.
+ *   · `frontal` — the deviation is SIDE-TO-SIDE. A lateral raise, a
+ *     lat pulldown, a bench press's flared elbows. The two limbs are
+ *     genuine mirror images, and from the front the far one has to be
+ *     reflected or one arm points at the ceiling and the other at the
+ *     floor.
+ *
+ * In profile the two are indistinguishable — `lateralShare` is 0, so
+ * nothing is reflected either way — which is exactly why 30 drawings
+ * authored from the side never had to care and still do not.
+ */
+export type LimbPlane = 'sagittal' | 'frontal';
+
 /** The viewpoint a drawing is composed for (§15). */
 export type FigureView =
   | 'side' | 'three_quarter' | 'front' | 'three_quarter_rear' | 'rear';
@@ -256,10 +378,12 @@ export interface MistakeFrame {
   /**
    * What the error is called, in three or four words.
    *
-   * It must name what the DRAWING shows. The spine is one segment, so
-   * this figure cannot round a back — it can raise a hip, drop a
-   * chest, or stand up out of a hinge. A label promising something
-   * the picture does not contain is worse than no picture.
+   * It must name what the DRAWING shows. The trunk is two segments,
+   * so it can raise a hip, drop a chest, lose thoracic extension or
+   * stand up out of a hinge — but it still has no lumbar curve of its
+   * own, so "rounded lower back" remains a label this picture cannot
+   * honour. A label promising something the drawing does not contain
+   * is worse than no drawing.
    */
   label: string;
   /** The wrong position, as a full pose. */
@@ -311,6 +435,21 @@ export interface PatternFrame {
    */
   ease?: Ease;
   moveShare?: number;
+  /**
+   * A SHAPING KEY: part of the movement, not a phase of it (§15).
+   *
+   * A repetition needs more keys than it has phases. Four keys down
+   * and four up is what keeps a planted foot planted and a bar path
+   * straight; four PHASE NAMES for the same descent is a timeline the
+   * reader is being asked to operate, and §15 is explicit that the
+   * keys must never be perceived as separate pictures.
+   *
+   * So a silent key contributes its pose and its time, and nothing
+   * else: no label, no dot, no line in the phase strip. The caption
+   * keeps naming the phase this key is part of, which is the one the
+   * body is actually in the middle of.
+   */
+  silent?: boolean;
   /**
    * Overrides for the far-side limbs on this frame only.
    *
@@ -369,6 +508,54 @@ export interface MovementDrawing {
    */
   view?: FigureView;
   /**
+   * Which plane each limb pair's deviation lies in (`LimbPlane`).
+   *
+   * Only consulted when the camera is turned — in profile both
+   * answers draw the same picture. Sagittal by default, because that
+   * is what a squat, a deadlift, a row, a curl and a pushdown all do,
+   * and because the failure it prevents (a squat drawn as a lunge) is
+   * much louder than the one it causes.
+   */
+  armPlane?: LimbPlane;
+  legPlane?: LimbPlane;
+  /**
+   * Muscles that HOLD THE POSITION rather than produce the movement
+   * (§9) — a squat's abdominal wall and spinal erectors, a deadlift's
+   * grip and trapezius.
+   *
+   * On the DRAWING rather than on the exercise, because stabilising is
+   * a property of the movement: every barbell squat braces the same
+   * way regardless of which exercise row points at this picture.
+   *
+   * A third tier, at a third of the secondary weight. Anything already
+   * named primary or secondary by the exercise is dropped, so the
+   * hierarchy §8 asks for cannot be inverted by a drawing.
+   */
+  stabilisers?: readonly string[];
+  /**
+   * THE ARMS AND THE IMPLEMENT ARE BEHIND THE BODY (§12).
+   *
+   * A back squat is held across the upper back, and drawing it in
+   * front of the chest is wrong twice over. The bar reads as a front
+   * rack, and — worse — the near arm folds back on itself across the
+   * torso and comes out as a paddle fifteen units wide against a
+   * seventeen-unit chest.
+   *
+   * That second one is not a pose that can be fixed by choosing
+   * better angles. THIS FIGURE HAS NO FORESHORTENING: a thirteen-unit
+   * upper arm draws thirteen units long whether it points across the
+   * picture or straight away from the viewer, so an arm that is
+   * genuinely behind the body cannot be made shorter — it can only be
+   * put where it belongs, which is behind the body.
+   *
+   * Depth by paint order, never by opacity: the whole grip assembly —
+   * far arm, implement, near arm, both sets of fingers — is drawn
+   * before the trunk, so the torso covers what it would really cover
+   * and the forearms and fists emerge either side of the shoulders.
+   * That is what a photograph of a back squat looks like.
+   */
+  gripBehind?: boolean;
+  /**
    * Multiplies every duration. A curl should not move like a squat
    * (§19) and the difference is mostly overall tempo, so one number
    * per drawing covers most of it and the per-frame `ease` covers
@@ -397,6 +584,8 @@ export interface MovementDrawing {
 
 export interface FigurePoints {
   hip: [number, number];
+  /** The lumbar/thoracic junction — where the trunk is allowed to bend. */
+  waist: [number, number];
   shoulder: [number, number];
   head: [number, number];
   elbow: [number, number];
@@ -421,14 +610,27 @@ function project(from: readonly [number, number], deg: number, length: number): 
  */
 export function resolvePose(pose: Pose): FigurePoints {
   const hip: [number, number] = [pose.hip[0], pose.hip[1]];
-  const shoulder = project(hip, pose.spine, SEGMENTS.spine);
+  /*
+   * Two segments, and the split is at WAIST_AT so that a pose with no
+   * `chest` lands the shoulder in exactly the place the single
+   * 26-unit segment put it. That identity is the whole reason all 43
+   * existing drawings survived gaining a spine joint untouched.
+   */
+  const waist = project(hip, pose.spine, SEGMENTS.spine * WAIST_AT);
+  const shoulder = project(waist, chestOf(pose), SEGMENTS.spine * (1 - WAIST_AT));
   const head = project(shoulder, pose.neck, SEGMENTS.neck + HEAD_RADIUS);
-  const elbow = project(shoulder, pose.upperArm, SEGMENTS.upperArm);
-  const hand = project(elbow, pose.foreArm, SEGMENTS.foreArm);
-  const knee = project(hip, pose.thigh, SEGMENTS.thigh);
-  const ankle = project(knee, pose.shin, SEGMENTS.shin);
+  const f = pose.short;
+  const elbow = project(shoulder, pose.upperArm, SEGMENTS.upperArm * (f?.upperArm ?? 1));
+  const hand = project(elbow, pose.foreArm, SEGMENTS.foreArm * (f?.foreArm ?? 1));
+  const knee = project(hip, pose.thigh, SEGMENTS.thigh * (f?.thigh ?? 1));
+  const ankle = project(knee, pose.shin, SEGMENTS.shin * (f?.shin ?? 1));
   const toe = project(ankle, pose.foot, SEGMENTS.foot);
-  return { hip, shoulder, head, elbow, hand, knee, ankle, toe };
+  return { hip, waist, shoulder, head, elbow, hand, knee, ankle, toe };
+}
+
+/** The thoracic angle, which defaults to a straight spine. */
+export function chestOf(pose: Pose): number {
+  return pose.chest ?? pose.spine;
 }
 
 /** The box every drawing is authored in. */
@@ -480,8 +682,104 @@ export function limbPath(a: Pt, b: Pt, wa: number, wb: number): string {
   ].join(' ');
 }
 
-function lerp(a: Pt, b: Pt, t: number): Pt {
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+/* ------------------------------------------------------------
+   LOFTED LIMBS (§5).
+
+   `limbPath` above is a linear taper, and a linear taper is a TUBE.
+   A real thigh is widest a third of the way down and draws in above
+   the knee; a real calf is widest high and lands on a thin ankle; an
+   upper arm is widest at the deltoid and narrows into the elbow. None
+   of that is expressible as "wide at one end, narrow at the other",
+   and all of it is what the eye uses to decide whether it is looking
+   at a leg or at a pipe.
+
+   So a limb is lofted through cross-sections, exactly as the trunk
+   is, with ONE addition: a cap apex beyond each end. That is what
+   preserves the property the round caps were there for — adjacent
+   segments share a width at the joint between them, so their two caps
+   land on top of each other and the joint bends as one continuous
+   piece of leg rather than showing a notch on the inside of the bend.
+
+   The widths that matter most are the ones just before a joint. A
+   limb that NARROWS into the joint and then flares at it is what makes
+   a knee read as a knee instead of as the place two tubes meet.
+   ------------------------------------------------------------ */
+
+/** A limb's cross-sections: `u` along the bone, a width key, a scale. */
+export type LimbProfile = ReadonlyArray<readonly [number, keyof BodyWidths, number]>;
+
+export const THIGH_PROFILE: LimbProfile = [
+  [0, 'thighTop', 1.0],
+  [0.3, 'thighTop', 1.02],   // the quadriceps mass
+  [0.62, 'thighTop', 0.86],
+  [0.86, 'knee', 0.9],       // drawn in above the joint
+  [1, 'knee', 1.0],          // and flaring at it
+];
+
+export const SHIN_PROFILE: LimbProfile = [
+  [0, 'knee', 1.0],
+  [0.16, 'knee', 0.97],
+  [0.34, 'knee', 1.04],      // the calf
+  [0.7, 'ankle', 1.2],
+  [1, 'ankle', 1.0],
+];
+
+export const UPPERARM_PROFILE: LimbProfile = [
+  [0, 'shoulder', 1.0],
+  [0.2, 'shoulder', 1.02],   // the deltoid, and then the arm narrows
+  [0.52, 'shoulder', 0.84],
+  [0.86, 'elbow', 0.92],
+  [1, 'elbow', 1.0],
+];
+
+export const FOREARM_PROFILE: LimbProfile = [
+  [0, 'elbow', 1.0],
+  [0.22, 'elbow', 1.08],     // the forearm belly, high and full
+  [0.62, 'wrist', 1.1],
+  [1, 'wrist', 1.0],
+];
+
+/**
+ * A limb as one smooth closed outline through its cross-sections,
+ * rounded at both ends.
+ *
+ * The apex points are what round the caps. Catmull-Rom flattens them
+ * slightly, which is an improvement: a joint is not a perfect circle.
+ */
+export function limbLoft(
+  a: Pt, b: Pt, widths: BodyWidths, profile: LimbProfile,
+): string {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 0.0001;
+  const ux = dx / len;
+  const uy = dy / len;
+  const nx = -uy;
+  const ny = ux;
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  for (const [u, key, scale] of profile) {
+    const h = (widths[key] * scale) / 2;
+    const cx = a[0] + dx * u;
+    const cy = a[1] + dy * u;
+    left.push([cx + nx * h, cy + ny * h]);
+    right.push([cx - nx * h, cy - ny * h]);
+  }
+  /*
+   * The cap apex is clamped to a fraction of the segment's own drawn
+   * length. A full half-width apex is right for a limb longer than it
+   * is wide, and catastrophic for one that is not: a foreshortened
+   * upper arm eight units long and nine wide grew to fifteen, and the
+   * two caps rather than the arm were most of what got drawn.
+   */
+  const first = profile[0];
+  const last = profile[profile.length - 1];
+  const cap = (half: number) => Math.min(half, len * 0.38);
+  const ha = cap((widths[first[1]] * first[2]) / 2);
+  const hb = cap((widths[last[1]] * last[2]) / 2);
+  const capB: Pt = [b[0] + ux * hb, b[1] + uy * hb];
+  const capA: Pt = [a[0] - ux * ha, a[1] - uy * ha];
+  return closedCurve([...left, capB, ...right.reverse(), capA], 0.5);
 }
 
 /**
@@ -492,10 +790,9 @@ function lerp(a: Pt, b: Pt, t: number): Pt {
  */
 export function torsoPaths(p: FigurePoints, plan: BodyPlan = PLANS.side): [string, string] {
   const w = plan.widths;
-  const waist = lerp(p.hip, p.shoulder, WAIST_AT);
   return [
-    limbPath(p.hip, waist, w.hipTop, w.waist),
-    limbPath(waist, p.shoulder, w.waist, w.chest),
+    limbPath(p.hip, p.waist, w.hipTop, w.waist),
+    limbPath(p.waist, p.shoulder, w.waist, w.chest),
   ];
 }
 
@@ -534,39 +831,128 @@ export function closedCurve(pts: readonly Pt[], tension = 0.5): string {
   return `${d} Z`;
 }
 
-/** Where a trunk cross-section sits, and how wide it is. */
+/**
+ * Where a trunk cross-section sits, and how wide it is.
+ *
+ * `u` is on the trunk's ORIGINAL straight parameterisation — 0 at the
+ * hip joint, 1 at the shoulder — so these numbers did not change when
+ * the spine gained a second segment. `trunkAt` is what turns a `u`
+ * into a place on a trunk that may be folded at the waist.
+ *
+ * Eight stations rather than five, because a bend needs stations on
+ * both sides of it: three points through a 30° fold is a polygon with
+ * the corner at the waist, and the corner is the first thing the eye
+ * finds.
+ */
 const TRUNK_STATIONS: ReadonlyArray<readonly [number, keyof BodyWidths, number]> = [
-  [-0.06, 'hipTop', 0.86],   // under the seat
-  [0.14, 'hipTop', 1.0],     // pelvis, the widest point below the ribs
-  [0.42, 'waist', 1.0],      // waist
-  [0.74, 'chest', 0.97],     // lower ribs
-  [1.0, 'chest', 0.93],      // clavicle line
+  [-0.07, 'hipTop', 0.84],   // under the seat
+  [0.08, 'hipTop', 1.0],     // the hip joints — widest point below the ribs
+  [0.24, 'hipTop', 0.96],    // iliac crest
+  [0.42, 'waist', 1.0],      // waist: where the two segments meet
+  [0.58, 'waist', 1.06],     // just above it, already flaring
+  [0.78, 'chest', 0.99],     // lower ribs — the widest point of the ribcage
+  [0.9, 'chest', 0.97],
+  /*
+   * ...and then a DOME over the top, not a flat lid.
+   *
+   * The outline used to stop at u = 1 and turn straight across, which
+   * puts a 90° corner at each end of the shoulder line — two spikes
+   * sticking out past the deltoids like epaulettes. It reads as
+   * armour, and it was the loudest remaining tell that this was a
+   * diagram: nothing on a body has a corner.
+   *
+   * Carrying the stations PAST the shoulder joint is also anatomy.
+   * The joint is not the top of the body — the trapezius rises above
+   * it into the neck, which is exactly what these two stations are.
+   */
+  [1.0, 'chest', 0.86],      // the acromion line
+  [1.07, 'chest', 0.6],      // the trapezius shelf
+  [1.13, 'chest', 0.28],     // and into the neck
 ];
 
+/** The trunk's two segments as page geometry, with their normals. */
+export interface SpineAxis {
+  hip: Pt;
+  waist: Pt;
+  shoulder: Pt;
+  lower: { ux: number; uy: number; nx: number; ny: number; len: number };
+  upper: { ux: number; uy: number; nx: number; ny: number; len: number };
+}
+
+function segOf(a: Pt, b: Pt) {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 0.0001;
+  const ux = dx / len;
+  const uy = dy / len;
+  // +n is ANTERIOR in profile, the viewer's right from the front — the
+  // same convention `musculature.ts` authors every belly against.
+  return { ux, uy, nx: -uy, ny: ux, len };
+}
+
+export function spineAxis(p: FigurePoints): SpineAxis {
+  return {
+    hip: p.hip, waist: p.waist, shoulder: p.shoulder,
+    lower: segOf(p.hip, p.waist),
+    upper: segOf(p.waist, p.shoulder),
+  };
+}
+
+/** How far either side of the waist the two normals are blended. */
+const WAIST_BLEND = 0.17;
+
 /**
- * The drawn trunk: hip to shoulder as one smooth silhouette.
+ * A point on the trunk, and which way "across" is there.
  *
- * The station list runs slightly PAST the hip joint (−0.06) because
+ * Position is piecewise and continuous, which needs no care. The
+ * NORMAL does: swapping it at the waist puts a notch in the
+ * silhouette exactly where the eye is looking for a waist, so it is
+ * blended across a band. The result is a crease rather than a corner,
+ * which is what a folded trunk actually shows.
+ */
+export function trunkAt(sa: SpineAxis, u: number): { c: Pt; nx: number; ny: number } {
+  const lo = sa.lower;
+  const up = sa.upper;
+  const c: Pt = u <= WAIST_AT
+    ? [sa.hip[0] + lo.ux * lo.len * (u / WAIST_AT),
+      sa.hip[1] + lo.uy * lo.len * (u / WAIST_AT)]
+    : [sa.waist[0] + up.ux * up.len * ((u - WAIST_AT) / (1 - WAIST_AT)),
+      sa.waist[1] + up.uy * up.len * ((u - WAIST_AT) / (1 - WAIST_AT))];
+  const t = (u - (WAIST_AT - WAIST_BLEND)) / (2 * WAIST_BLEND);
+  const k = t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+  const nx = lo.nx + (up.nx - lo.nx) * k;
+  const ny = lo.ny + (up.ny - lo.ny) * k;
+  const l = Math.hypot(nx, ny) || 1;
+  return { c, nx: nx / l, ny: ny / l };
+}
+
+/**
+ * The drawn trunk: hip to shoulder as one smooth silhouette, folded
+ * at the waist if the pose folds there.
+ *
+ * The station list runs slightly PAST the hip joint (−0.07) because
  * the hip joint is inside the body, not at the bottom of it — ending
  * the outline exactly there cuts the seat off a hinged figure and is
  * the single most obvious tell that a drawing is a diagram.
+ *
+ * ONE path, still. Drawing the pelvis and the rib cage as two shapes
+ * would give each of them its own contour across the middle of the
+ * body, which is the "pile of tubes" the loft exists to avoid. What
+ * separates them is the iliac crest and the costal arch in
+ * `musculature.ts` — lines on one body, not two bodies.
  */
 export function trunkOutline(p: FigurePoints, plan: BodyPlan = PLANS.side): string {
   const w = plan.widths;
-  const axis: Pt = [p.shoulder[0] - p.hip[0], p.shoulder[1] - p.hip[1]];
-  const len = Math.hypot(axis[0], axis[1]) || 0.0001;
-  const nx = -axis[1] / len;
-  const ny = axis[0] / len;
+  const sa = spineAxis(p);
   const left: Pt[] = [];
   const right: Pt[] = [];
   for (const [u, key, scale] of TRUNK_STATIONS) {
-    const cx = p.hip[0] + axis[0] * u;
-    const cy = p.hip[1] + axis[1] * u;
+    const { c, nx, ny } = trunkAt(sa, u);
     const h = (w[key] * scale) / 2;
-    left.push([cx + nx * h, cy + ny * h]);
-    right.push([cx - nx * h, cy - ny * h]);
+    left.push([c[0] + nx * h, c[1] + ny * h]);
+    right.push([c[0] - nx * h, c[1] - ny * h]);
   }
-  return closedCurve([...left, ...right.reverse()], 0.62);
+  return closedCurve([...left, ...right.reverse()], 0.58);
 }
 
 /** The head, as an ellipse tilted to follow the neck. */
@@ -642,19 +1028,46 @@ export function mirrorAngle(deg: number, lateralShare: number): number {
   return (Math.atan2(y, x) * 180) / Math.PI;
 }
 
+/** Which plane each limb pair moves in. Sagittal unless a drawing says. */
+export interface LimbPlanes {
+  arm: LimbPlane;
+  leg: LimbPlane;
+}
+
+export const SAGITTAL: LimbPlanes = { arm: 'sagittal', leg: 'sagittal' };
+
+export function planesOf(drawing: MovementDrawing): LimbPlanes {
+  return {
+    arm: drawing.armPlane ?? 'sagittal',
+    leg: drawing.legPlane ?? 'sagittal',
+  };
+}
+
 export function farSideOf(
   pose: Pose, symmetry: Symmetry, partner?: Pose, plan: BodyPlan = PLANS.side,
+  planes: LimbPlanes = SAGITTAL,
 ): Pose {
-  const share = plan.lateralShare;
-  const flip = (a: number) => mirrorAngle(a, share);
+  /*
+   * A limb is reflected only to the extent that its deviation is
+   * genuinely side-to-side. A sagittal limb is never reflected, at any
+   * camera angle, because from every camera angle both of them point
+   * the same way — which is why a squat's two thighs must stay
+   * parallel and a lateral raise's two arms must not.
+   */
+  const armShare = planes.arm === 'frontal' ? plan.lateralShare : 0;
+  const legShare = planes.leg === 'frontal' ? plan.lateralShare : 0;
+  const flipArm = (a: number) => mirrorAngle(a, armShare);
+  const flipLeg = (a: number) => mirrorAngle(a, legShare);
+  const flip = flipArm;
 
   if (symmetry === 'gait' && partner) {
     // The other half of the stride, hung off THIS frame's hip so the
     // body does not tear in two.
     return {
-      ...partner, hip: pose.hip, spine: pose.spine, neck: pose.neck,
-      upperArm: flip(partner.upperArm), foreArm: flip(partner.foreArm),
-      thigh: flip(partner.thigh), shin: flip(partner.shin), foot: flip(partner.foot),
+      ...partner, hip: pose.hip, spine: pose.spine, chest: chestOf(pose), neck: pose.neck,
+      upperArm: flipArm(partner.upperArm), foreArm: flipArm(partner.foreArm),
+      thigh: flipLeg(partner.thigh), shin: flipLeg(partner.shin),
+      foot: flipLeg(partner.foot),
     };
   }
   if (symmetry === 'single') {
@@ -662,8 +1075,8 @@ export function farSideOf(
     // matches, because that is what the other side is actually doing.
     return {
       ...pose,
-      upperArm: flip(pose.spine + 172), foreArm: flip(pose.spine + 176),
-      thigh: flip(pose.thigh), shin: flip(pose.shin), foot: flip(pose.foot),
+      upperArm: flip(chestOf(pose) + 172), foreArm: flip(chestOf(pose) + 176),
+      thigh: flipLeg(pose.thigh), shin: flipLeg(pose.shin), foot: flipLeg(pose.foot),
     };
   }
   /*
@@ -672,14 +1085,14 @@ export function farSideOf(
    * symmetrical and offsetting one of them by 7° is simply an error
    * in the drawing.
    */
-  const d = 1 - share;
+  const d = 1 - plan.lateralShare;
   return {
     ...pose,
-    upperArm: flip(pose.upperArm) + 7 * d,
-    foreArm: flip(pose.foreArm) + 8 * d,
-    thigh: flip(pose.thigh) + 7 * d,
-    shin: flip(pose.shin) - 5 * d,
-    foot: flip(pose.foot) + 4 * d,
+    upperArm: flipArm(pose.upperArm) + 7 * d,
+    foreArm: flipArm(pose.foreArm) + 8 * d,
+    thigh: flipLeg(pose.thigh) + 7 * d,
+    shin: flipLeg(pose.shin) - 5 * d,
+    foot: flipLeg(pose.foot) + 4 * d,
   };
 }
 
@@ -780,12 +1193,35 @@ export function figureCentre(p: FigurePoints): [number, number] {
   return [(p.hip[0] + p.shoulder[0]) / 2, (p.hip[1] + p.shoulder[1]) / 2];
 }
 
+/**
+ * Which PHASE a key belongs to: itself, or the last named key before
+ * it. Silent keys always follow the phase they are part of, never
+ * precede it, or a descent would be captioned with the phase the body
+ * has already left.
+ */
+export function phaseIndexOf(frames: readonly PatternFrame[], i: number): number {
+  for (let k = i; k >= 0; k--) {
+    if (!frames[k].silent) return k;
+  }
+  return 0;
+}
+
+/** The indices that are phases — everything the reader is shown. */
+export function namedFrames(frames: readonly PatternFrame[]): number[] {
+  const out: number[] = [];
+  frames.forEach((f, i) => { if (!f.silent) out.push(i); });
+  return out.length > 0 ? out : [0];
+}
+
 /** The frame the repetition is "at" — the held one, unless a drawing says otherwise. */
 export function effortIndex(drawing: MovementDrawing): number {
   if (drawing.effortFrame != null) return drawing.effortFrame;
   let best = 0;
   let bestHold = -1;
   drawing.frames.forEach((f, i) => {
+    // A shaping key is never the working position: it exists to make
+    // the travel smooth, and it carries no label to put on a thumbnail.
+    if (f.silent) return;
     const hold = f.holdMs ?? 700;
     if (hold > bestHold) { bestHold = hold; best = i; }
   });
@@ -847,6 +1283,7 @@ export function offsetSide(
   const mv = (p: [number, number], dx: number): [number, number] => [p[0] + dx, p[1]];
   return {
     hip: pts.hip,
+    waist: pts.waist,
     shoulder: mv(pts.shoulder, arm),
     head: pts.head,
     elbow: mv(pts.elbow, arm),
@@ -890,10 +1327,22 @@ export function lerpAngle(a: number, b: number, t: number): number {
   return a + d * t;
 }
 
+/** Interpolated foreshortening. Absent counts as 1, on both sides. */
+function lerpShort(a?: Foreshorten, b?: Foreshorten, t = 0): Foreshorten | undefined {
+  if (!a && !b) return undefined;
+  const at = (k: keyof Foreshorten) => (a?.[k] ?? 1) + ((b?.[k] ?? 1) - (a?.[k] ?? 1)) * t;
+  return {
+    upperArm: at('upperArm'), foreArm: at('foreArm'),
+    thigh: at('thigh'), shin: at('shin'),
+  };
+}
+
 export function lerpPose(a: Pose, b: Pose, t: number): Pose {
   return {
+    short: lerpShort(a.short, b.short, t),
     hip: [a.hip[0] + (b.hip[0] - a.hip[0]) * t, a.hip[1] + (b.hip[1] - a.hip[1]) * t],
     spine: lerpAngle(a.spine, b.spine, t),
+    chest: lerpAngle(chestOf(a), chestOf(b), t),
     neck: lerpAngle(a.neck, b.neck, t),
     upperArm: lerpAngle(a.upperArm, b.upperArm, t),
     foreArm: lerpAngle(a.foreArm, b.foreArm, t),
@@ -1020,7 +1469,7 @@ export function sampleTimeline(
  */
 const TRAVEL_WEIGHT: Record<JointName, number> = {
   hand: 1.25, knee: 1.05, elbow: 1.0, ankle: 1.0,
-  hip: 0.95, toe: 0.9, shoulder: 0.7, head: 0.5,
+  hip: 0.95, toe: 0.9, shoulder: 0.7, waist: 0.6, head: 0.5,
 };
 
 /** Which joint the path should follow. */

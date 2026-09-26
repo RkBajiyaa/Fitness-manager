@@ -78,20 +78,20 @@
      the renderer — and the far side is a fourth, fifth and sixth
      rather than the near side at reduced opacity, because opacity as
      a depth cue makes a far thigh show through a near one. */
-  --fig-lit:        #ffffff;
-  --fig-skin:       #f2ece1;
-  --fig-core:       #cec4ae;
-  --fig-lit-mid:    #f4efe6;
-  --fig-skin-mid:   #e7e1d5;
-  --fig-core-mid:   #c5bba7;
+  --fig-lit:        #fffaf2;
+  --fig-skin:       #ecdfc9;
+  --fig-core:       #bfa682;
+  --fig-lit-mid:    #f6ead8;
+  --fig-skin-mid:   #ddcfb8;
+  --fig-core-mid:   #ad9472;
   --fig-ink-mid:    #494540;
-  --fig-lit-far:    #ddd8cd;
-  --fig-skin-far:   #d0cabc;
-  --fig-core-far:   #b2aa98;
+  --fig-lit-far:    #ded2bf;
+  --fig-skin-far:   #c8bba4;
+  --fig-core-far:   #9c8b72;
   /* Modelling and line work. Used at low opacity: this is anatomy
      being suggested, not a textbook plate (§2). */
-  --fig-model:      #b0a795;
-  --fig-line:       #8b8474;
+  --fig-model:      #a98d63;
+  --fig-line:       #8a7a5f;
   --fig-hair:       #4a4238;
   --fig-face:       #6b6456;
   --fig-contact:    #1b1d22;
@@ -264,18 +264,18 @@
   --fig-stage-base: #191a1e;
   --fig-ink:        #0a0b0e;
   --fig-ink-far:    #26272c;
-  --fig-lit:        #dcd8d0;
-  --fig-skin:       #b4b0a8;
-  --fig-core:       #7c7972;
-  --fig-lit-mid:    #c3bfb8;
-  --fig-skin-mid:   #9e9b94;
-  --fig-core-mid:   #6d6a64;
+  --fig-lit:        #ded5c6;
+  --fig-skin:       #aca293;
+  --fig-core:       #6e665a;
+  --fig-lit-mid:    #c5bcae;
+  --fig-skin-mid:   #978e80;
+  --fig-core-mid:   #615a50;
   --fig-ink-mid:    #131418;
-  --fig-lit-far:    #6d6d72;
-  --fig-skin-far:   #5b5b60;
-  --fig-core-far:   #45454a;
-  --fig-model:      #6a665e;
-  --fig-line:       #57544d;
+  --fig-lit-far:    #706e6a;
+  --fig-skin-far:   #5d5b56;
+  --fig-core-far:   #464440;
+  --fig-model:      #6d6558;
+  --fig-line:       #5a5347;
   --fig-hair:       #23201c;
   --fig-face:       #46433c;
   --fig-contact:    #000000;
